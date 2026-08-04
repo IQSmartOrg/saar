@@ -1,0 +1,133 @@
+import type { Clock } from '@/core/ports/Clock';
+import type { SegmentSink, SourceHealth, TranscriptSource } from '@/core/ports/TranscriptSource';
+import type { TranscriptSegment, TranscriptSourceKind } from '@/core/types/transcript';
+import { MEET_SELECTORS, type MeetSelectors } from '@/adapters/meet/selectors';
+
+interface OpenBlock {
+  readonly id: string;
+  readonly tStart: number;
+  speaker: string | null;
+  text: string;
+}
+
+let seq = 0;
+
+/**
+ * Reads Google Meet's live caption DOM.
+ *
+ * Meet keeps a rolling window of a few speaker blocks and rewrites a block's
+ * text in place as its ASR refines the utterance. We therefore key blocks by
+ * DOM node identity (WeakMap), re-emit on every change with final=false, and
+ * emit final=true only once a block leaves the window or capture stops.
+ *
+ * No `chrome.*` here by design — this class must run unchanged under Puppeteer
+ * for the cloud bot. The lint rule in eslint.config.js enforces that.
+ */
+export class MeetCaptionScraper implements TranscriptSource {
+  readonly kind: TranscriptSourceKind = 'meet-captions';
+
+  private observer: MutationObserver | null = null;
+  private sink: SegmentSink | null = null;
+  private readonly open = new WeakMap<Element, OpenBlock>();
+  private live = new Map<string, { el: Element; block: OpenBlock }>();
+  private startedAt = 0;
+  private segmentsSeen = 0;
+  private lastSegmentAt: number | null = null;
+  private matched = false;
+
+  constructor(
+    private readonly doc: Document,
+    private readonly clock: Clock,
+    private readonly selectors: MeetSelectors = MEET_SELECTORS,
+  ) {
+    this.matched = this.region() !== null;
+  }
+
+  private region(): Element | null {
+    return this.doc.querySelector(this.selectors.captionRegion);
+  }
+
+  async start(sink: SegmentSink): Promise<void> {
+    const region = this.region();
+    this.matched = region !== null;
+    if (!region) return;
+
+    this.sink = sink;
+    this.startedAt = this.clock.now();
+
+    this.observer = new MutationObserver(() => this.scan());
+    this.observer.observe(region, { childList: true, subtree: true, characterData: true });
+    this.scan();
+  }
+
+  async stop(): Promise<void> {
+    this.observer?.disconnect();
+    this.observer = null;
+    for (const { block } of this.live.values()) this.emit(block, true);
+    this.live.clear();
+    this.sink = null;
+  }
+
+  health(): SourceHealth {
+    return {
+      ok: this.matched && this.segmentsSeen > 0,
+      selectorsMatched: this.matched,
+      segmentsSeen: this.segmentsSeen,
+      lastSegmentAt: this.lastSegmentAt,
+      detail: this.matched ? undefined : 'caption region not found — check selectors.ts',
+    };
+  }
+
+  private scan(): void {
+    const region = this.region();
+    if (!region) return;
+
+    const present = new Map<string, { el: Element; block: OpenBlock }>();
+
+    for (const el of Array.from(region.querySelectorAll(this.selectors.captionBlock))) {
+      const speaker = el.querySelector(this.selectors.blockSpeaker)?.textContent?.trim() || null;
+      const text = el.querySelector(this.selectors.blockText)?.textContent?.trim() ?? '';
+      if (text === '') continue;
+
+      let block = this.open.get(el);
+      const isNew = block === undefined;
+      if (block === undefined) {
+        block = { id: `meet-${++seq}`, tStart: this.relNow(), speaker, text };
+        this.open.set(el, block);
+      }
+
+      const changed = block.text !== text || block.speaker !== speaker;
+      block.speaker = speaker;
+      block.text = text;
+      present.set(block.id, { el, block });
+
+      if (isNew || changed) this.emit(block, false);
+    }
+
+    // Anything that was live but is no longer present has scrolled out of the
+    // rolling window — that is our signal the utterance is finished.
+    for (const [id, entry] of this.live) {
+      if (!present.has(id)) this.emit(entry.block, true);
+    }
+    this.live = present;
+  }
+
+  private relNow(): number {
+    return Math.round((this.clock.now() - this.startedAt) / 1000);
+  }
+
+  private emit(block: OpenBlock, final: boolean): void {
+    const segment: TranscriptSegment = {
+      id: block.id,
+      final,
+      speaker: block.speaker,
+      text: block.text,
+      tStart: block.tStart,
+      tEnd: this.relNow(),
+      source: 'meet-captions',
+    };
+    this.segmentsSeen += 1;
+    this.lastSegmentAt = this.clock.now();
+    this.sink?.upsert(segment);
+  }
+}
