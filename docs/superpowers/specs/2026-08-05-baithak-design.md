@@ -1,7 +1,7 @@
 # Baithak — Design Spec
 
 **Date:** 2026-08-05
-**Repo:** `IQSmart/baithak`
+**Repo:** `IQSmartOrg/baithak`
 **Status:** Design approved, pending implementation plan
 
 बैठक (*baithak*) — a meeting, a sitting. A Chrome extension that sends a dedicated notetaker
