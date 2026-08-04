@@ -2,7 +2,7 @@
   <img src="assets/logo.png" alt="" width="96" height="96">
 </p>
 
-<h1 align="center">Baithak</h1>
+<h1 align="center">Saar</h1>
 
 <p align="center">
   AI note-taking for your meetings.

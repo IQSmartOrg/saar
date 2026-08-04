@@ -1,12 +1,12 @@
-# Baithak — Design Spec
+# Saar — Design Spec
 
 **Date:** 2026-08-05
-**Repo:** `IQSmartOrg/baithak`
+**Repo:** `IQSmartOrg/saar`
 **Status:** Design approved, pending implementation plan
 
-बैठक (*baithak*) — a meeting, a sitting. A Chrome extension that sends a dedicated notetaker
-account into your Google Meet calls, captures a speaker-attributed transcript, and turns it
-into a summary and minutes using any OpenAI-compatible LLM — including a local Ollama.
+सार (*saar*) — essence, gist. A Chrome extension that sends a dedicated notetaker account
+into your Google Meet calls, captures a speaker-attributed transcript, and turns it into a
+summary and minutes using any OpenAI-compatible LLM — including a local Ollama.
 
 ---
 
@@ -312,7 +312,7 @@ export interface Clock { now(): number; }
 ```
 User opens meet.google.com/abc-defg-hij
   → meet-detector (content script) → service worker
-  → SW renders "Baithak joining… cancel?" toast in the user's tab (5s)
+  → SW renders "Saar joining… cancel?" toast in the user's tab (5s)
   → SW: tabs.create({ url: "…?authuser=<botIndex>", active: false })
        + tabs.update({ muted: true })            ← before media starts
   → bot-agent (content script on bot tab):
