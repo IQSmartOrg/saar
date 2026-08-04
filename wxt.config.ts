@@ -16,5 +16,7 @@ export default defineConfig({
       128: '/icon-128.png',
     },
   },
-  publicDir: '../assets',
+  // Resolved from the project root, not srcDir — '../assets' silently points
+  // outside the repo and copies nothing.
+  publicDir: 'assets',
 });

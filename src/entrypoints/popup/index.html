@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Saar</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <header>
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="/logo-lockup-dark.png" />
+        <img src="/logo-lockup.png" alt="Saar" height="22" />
+      </picture>
+    </header>
+    <div class="body">
+      <p id="status">Loading…</p>
+      <label for="account">Notetaker account index</label>
+      <input id="account" type="number" min="0" step="1" placeholder="e.g. 1" />
+      <p class="hint">
+        The Google account Saar joins as. Sign it into this Chrome profile, then use its
+        <code>authuser</code> index.
+      </p>
+      <button id="open">Open meetings</button>
+    </div>
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
