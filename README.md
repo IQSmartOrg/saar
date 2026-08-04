@@ -1,8 +1,9 @@
 <p align="center">
-  <img src="assets/logo.png" alt="" width="96" height="96">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo-lockup-dark.png">
+    <img src="assets/logo-lockup.png" alt="Saar" width="300">
+  </picture>
 </p>
-
-<h1 align="center">Saar</h1>
 
 <p align="center">
   AI note-taking for your meetings.
