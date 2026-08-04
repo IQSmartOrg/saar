@@ -1,0 +1,30 @@
+{
+  "name": "saar",
+  "private": true,
+  "type": "module",
+  "version": "0.1.0",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "deps": "depcruise src --config .dependency-cruiser.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "check": "npm run typecheck && npm run lint && npm run deps && npm test"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.287",
+    "dependency-cruiser": "18.1.1",
+    "eslint": "10.8.0",
+    "fake-indexeddb": "6.2.5",
+    "happy-dom": "20.11.1",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.66.0",
+    "vitest": "4.1.10",
+    "wxt": "0.21.3"
+  }
+}
