@@ -85,8 +85,8 @@ export class MeetCaptionScraper implements TranscriptSource {
     const present = new Map<string, { el: Element; block: OpenBlock }>();
 
     for (const el of Array.from(region.querySelectorAll(this.selectors.captionBlock))) {
-      const speaker = el.querySelector(this.selectors.blockSpeaker)?.textContent?.trim() || null;
-      const text = el.querySelector(this.selectors.blockText)?.textContent?.trim() ?? '';
+      const speaker = this.readSpeaker(el);
+      const text = this.readText(el);
       if (text === '') continue;
 
       let block = this.open.get(el);
@@ -110,6 +110,31 @@ export class MeetCaptionScraper implements TranscriptSource {
       if (!present.has(id)) this.emit(entry.block, true);
     }
     this.live = present;
+  }
+
+  /**
+   * Meet's class names rotate. When the configured selector misses we fall back
+   * to structure — the speaker is the first <span> in a caption block — so a
+   * renamed class degrades attribution rather than losing the whole transcript.
+   */
+  private readSpeaker(block: Element): string | null {
+    const bySelector = block.querySelector(this.selectors.blockSpeaker)?.textContent?.trim();
+    if (bySelector) return bySelector;
+    return block.querySelector('span')?.textContent?.trim() || null;
+  }
+
+  /** Fallback: the caption text is the last non-image child that carries text. */
+  private readText(block: Element): string {
+    const bySelector = block.querySelector(this.selectors.blockText)?.textContent?.trim();
+    if (bySelector) return bySelector;
+
+    const speaker = this.readSpeaker(block);
+    const candidates = Array.from(block.querySelectorAll('div, span')).filter((el) => {
+      if (el.querySelector('img')) return false;
+      const t = el.textContent?.trim() ?? '';
+      return t !== '' && t !== speaker;
+    });
+    return candidates.at(-1)?.textContent?.trim() ?? '';
   }
 
   private relNow(): number {

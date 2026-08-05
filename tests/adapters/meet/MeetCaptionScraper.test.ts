@@ -14,13 +14,14 @@ function captionDom(blocks: Array<{ speaker: string; text: string }>): string {
   const items = blocks
     .map(
       (b) => `
-    <div class="saar-caption-block">
-      <span class="saar-caption-speaker">${b.speaker}</span>
-      <span class="saar-caption-text">${b.text}</span>
+    <div class="nMcdL bj4p3b">
+      <img src="https://lh3.googleusercontent.com/a/x" />
+      <span class="NWpY1d">${b.speaker}</span>
+      <div class="ygicle VbkSUe">${b.text}</div>
     </div>`,
     )
     .join('');
-  return `<div aria-live="polite">${items}</div>`;
+  return `<div role="region" aria-label="Captions">${items}</div>`;
 }
 
 function collectingSink() {
@@ -78,7 +79,7 @@ describe('MeetCaptionScraper', () => {
     await s.start(sink);
 
     const firstId = seen[0]!.id;
-    document.querySelector('.saar-caption-text')!.textContent = 'I think we should ship';
+    document.querySelector('.ygicle')!.textContent = 'I think we should ship';
     await tick();
 
     const revised = seen.filter((x) => x.id === firstId);
@@ -95,7 +96,7 @@ describe('MeetCaptionScraper', () => {
     await s.start(sink);
     const before = seen.length;
 
-    document.querySelector('[aria-live="polite"]')!.setAttribute('data-noise', '1');
+    document.querySelector('[role="region"]')!.setAttribute('data-noise', '1');
     await tick();
 
     expect(seen).toHaveLength(before);
@@ -109,11 +110,11 @@ describe('MeetCaptionScraper', () => {
     await s.start(sink);
     const firstId = seen[0]!.id;
 
-    const region = document.querySelector('[aria-live="polite"]')!;
+    const region = document.querySelector('[role="region"]')!;
     region.innerHTML = `
-      <div class="saar-caption-block">
-        <span class="saar-caption-speaker">Rahul Shah</span>
-        <span class="saar-caption-text">second turn</span>
+      <div class="nMcdL bj4p3b">
+        <span class="NWpY1d">Rahul Shah</span>
+        <div class="ygicle VbkSUe">second turn</div>
       </div>`;
     await tick();
 
@@ -148,6 +149,43 @@ describe('MeetCaptionScraper', () => {
     const final = seen.at(-1)!;
     expect(final.tStart).toBe(0);
     expect(final.tEnd).toBe(15);
+  });
+
+  it('falls back to structure when Google rotates the class names', async () => {
+    // Same shape, but .NWpY1d / .ygicle renamed — the selectors miss entirely.
+    document.body.innerHTML = `
+      <div role="region" aria-label="Captions">
+        <div class="nMcdL bj4p3b">
+          <img src="https://lh3.googleusercontent.com/a/x" />
+          <span class="renamed-speaker">Priya Nair</span>
+          <div class="renamed-text">still captured</div>
+        </div>
+      </div>`;
+    const { sink, seen } = collectingSink();
+    const s = new MeetCaptionScraper(document, clock, MEET_SELECTORS);
+    await s.start(sink);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.speaker).toBe('Priya Nair');
+    expect(seen[0]!.text).toBe('still captured');
+    await s.stop();
+  });
+
+  it('matches the caption region by aria-live when the semantic role is absent', async () => {
+    document.body.innerHTML = `
+      <div aria-live="polite">
+        <div class="nMcdL bj4p3b">
+          <span class="NWpY1d">Rahul Shah</span>
+          <div class="ygicle VbkSUe">legacy layout</div>
+        </div>
+      </div>`;
+    const { sink, seen } = collectingSink();
+    const s = new MeetCaptionScraper(document, clock, MEET_SELECTORS);
+    await s.start(sink);
+
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.text).toBe('legacy layout');
+    await s.stop();
   });
 
   it('health reports ok once segments have been seen', async () => {
