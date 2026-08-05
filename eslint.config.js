@@ -1,7 +1,17 @@
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['.wxt/**', '.output/**', 'node_modules/**'] },
+  {
+    ignores: [
+      '.wxt/**',
+      '.output/**',
+      // Stray build trees WXT can drop at the repo root — linting minified
+      // bundles produces hundreds of meaningless errors.
+      'chrome-mv3/**',
+      'firefox-mv2/**',
+      'node_modules/**',
+    ],
+  },
   ...tseslint.configs.recommended,
   {
     rules: {

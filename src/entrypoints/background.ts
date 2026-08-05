@@ -109,10 +109,21 @@ export default defineBackground(() => {
     bots.delete(sessionId);
 
     const current = await repo.getSession(sessionId);
-    if (current && current.status !== 'failed') {
-      await repo.updateSession(sessionId, { status: 'ended', endedAt: Date.now() });
+    const label = current?.title ?? entry.meetingCode;
+
+    if (current?.status === 'failed') {
+      // Never report a failure as a success — say what actually went wrong.
+      await notify('Saar could not record this meeting', current.error ?? label);
+      return;
     }
-    await notify('Transcript saved', current?.title ?? entry.meetingCode);
+
+    await repo.updateSession(sessionId, { status: 'ended', endedAt: Date.now() });
+    const segments = await repo.getSegments(sessionId);
+    const captured = segments.filter((s) => s.final).length;
+    await notify(
+      captured > 0 ? 'Transcript saved' : 'Meeting ended — nothing captured',
+      captured > 0 ? `${label} · ${captured} lines` : label,
+    );
   }
 
   chrome.runtime.onMessage.addListener((msg: Message, sender) => {

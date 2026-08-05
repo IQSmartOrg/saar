@@ -1,6 +1,7 @@
 import { JOIN_CONTROL_SELECTORS, type JoinControlSelectors } from '@/adapters/meet/selectors';
 
-const JOIN_LABELS = ['join now', 'ask to join', 'join'];
+/** Most specific first — "join" alone would also match "Join with a code". */
+const JOIN_LABELS = ['join now', 'ask to join', 'join anyway', 'join meeting', 'join'];
 
 /**
  * Drives Meet's pre-join and in-call controls via DOM interaction only.
@@ -33,20 +34,46 @@ export class MeetJoinAutomation {
   }
 
   async clickJoin(): Promise<boolean> {
-    const candidates = Array.from(this.doc.querySelectorAll<HTMLElement>(this.sel.joinButton));
-    const btn = candidates.find((el) => {
-      const label = `${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`
-        .toLowerCase()
-        .trim();
-      return JOIN_LABELS.some((l) => label.includes(l));
-    });
-    if (!btn) return false;
-    btn.click();
-    return true;
+    const candidates = Array.from(
+      this.doc.querySelectorAll<HTMLElement>(this.sel.joinButton),
+    ).filter((el) => !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true');
+
+    // Walk labels most-specific first so "Join now" wins over a generic "Join".
+    for (const wanted of JOIN_LABELS) {
+      const btn = candidates.find((el) => {
+        const label = `${el.textContent ?? ''} ${el.getAttribute('aria-label') ?? ''}`
+          .toLowerCase()
+          .replace(/\s+/g, ' ')
+          .trim();
+        return label.includes(wanted);
+      });
+      if (btn) {
+        btn.click();
+        return true;
+      }
+    }
+    return false;
   }
 
   isInLobby(): boolean {
     return this.doc.querySelector(this.sel.lobbyIndicator) !== null;
+  }
+
+  /**
+   * True once we are actually inside the call, as opposed to sitting on the
+   * pre-join screen or in the lobby. The captions control and participant tiles
+   * only exist in-call, so either one is sufficient evidence.
+   *
+   * This is what lets a human click "Join now" themselves when clickJoin()
+   * cannot find the button — the agent just waits until it observes that it is
+   * in the meeting, however that happened.
+   */
+  isInCall(): boolean {
+    if (this.isInLobby()) return false;
+    return (
+      this.doc.querySelector(this.sel.captionsToggle) !== null ||
+      this.doc.querySelector(this.sel.participantTile) !== null
+    );
   }
 
   async enableCaptions(): Promise<boolean> {

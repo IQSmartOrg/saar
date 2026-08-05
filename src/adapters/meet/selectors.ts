@@ -34,7 +34,7 @@ export interface JoinControlSelectors {
 export const JOIN_CONTROL_SELECTORS: JoinControlSelectors = {
   micToggle: '[aria-label*="microphone" i][role="button"]',
   cameraToggle: '[aria-label*="camera" i][role="button"]',
-  joinButton: 'button[jsname], [role="button"]',
+  joinButton: 'button, [role="button"], [jsname]',
   lobbyIndicator: '[data-lobby], [aria-label*="Asking to join" i]',
   captionsToggle: '[aria-label*="captions" i][role="button"]',
   participantTile: '[data-participant-id]',

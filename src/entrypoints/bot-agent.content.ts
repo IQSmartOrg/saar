@@ -6,8 +6,13 @@ import { SystemScheduler } from '@/core/ports/Scheduler';
 import { isBotTab } from '@/core/meet/meetingCode';
 import { PORT_NAME, type Message } from '@/shared/messaging/messages';
 
-const LOBBY_TIMEOUT_MS = 180_000;
-const JOIN_ATTEMPTS = 20;
+/**
+ * Covers the whole path into the meeting: pre-join screen, clicking join, and
+ * waiting in the lobby to be admitted. One patient budget rather than separate
+ * short ones, so a human clicking "Join now" manually still works.
+ */
+const ENTER_TIMEOUT_MS = 180_000;
+const ENTER_POLL_MS = 2000;
 const CAPTION_RETRIES = 5;
 const HEALTH_INTERVAL_MS = 30_000;
 /** Backstop: an orphaned bot in an empty meeting ends itself (spec §7.1). */
@@ -34,25 +39,41 @@ export default defineContentScript({
 
     sendState('joining');
 
-    // 1. Pre-join: mic and camera off, then join.
-    for (let i = 0; i < JOIN_ATTEMPTS; i++) {
-      await join.muteMicAndCamera();
-      if (await join.clickJoin()) break;
-      await sleep(500);
-    }
+    // 1. Get into the meeting. Each pass mutes, tries to click join, and checks
+    //    whether we are in yet — so if clickJoin() cannot find the button, a
+    //    human clicking it themselves still gets us there.
+    const enterDeadline = Date.now() + ENTER_TIMEOUT_MS;
+    let inCall = false;
+    let announcedLobby = false;
 
-    // 2. Wait out the lobby.
-    const lobbyDeadline = Date.now() + LOBBY_TIMEOUT_MS;
-    while (join.isInLobby()) {
-      sendState('in-lobby');
-      if (Date.now() > lobbyDeadline) {
-        sendState('failed', 'not admitted within 3 minutes');
-        return;
+    while (Date.now() < enterDeadline) {
+      if (join.isInCall()) {
+        inCall = true;
+        break;
       }
-      await sleep(3000);
+      await join.muteMicAndCamera();
+      if (join.isInLobby()) {
+        if (!announcedLobby) {
+          sendState('in-lobby');
+          announcedLobby = true;
+        }
+      } else {
+        await join.clickJoin();
+      }
+      await sleep(ENTER_POLL_MS);
     }
 
-    // 3. Turn captions on, with backoff.
+    if (!inCall) {
+      sendState(
+        'failed',
+        announcedLobby
+          ? 'not admitted from the lobby within 3 minutes'
+          : 'could not get into the meeting within 3 minutes',
+      );
+      return;
+    }
+
+    // 2. Turn captions on, with backoff.
     let captionsOn = false;
     for (let attempt = 0; attempt < CAPTION_RETRIES; attempt++) {
       captionsOn = await join.enableCaptions();

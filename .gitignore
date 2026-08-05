@@ -1,5 +1,8 @@
 node_modules/
 .wxt/
 .output/
+# WXT has been observed writing a build tree to the repo root; never commit it.
+chrome-mv3/
+firefox-mv2/
 *.zip
 .DS_Store

@@ -64,6 +64,70 @@ describe('MeetJoinAutomation', () => {
     expect(await new MeetJoinAutomation(document).clickJoin()).toBe(true);
   });
 
+  it('clickJoin finds a plain button with no jsname or role', async () => {
+    document.body.innerHTML = `<button>Join now</button>`;
+    let clicked = false;
+    document.querySelector('button')!.addEventListener('click', () => {
+      clicked = true;
+    });
+    expect(await new MeetJoinAutomation(document).clickJoin()).toBe(true);
+    expect(clicked).toBe(true);
+  });
+
+  it('clickJoin reads text out of nested spans', async () => {
+    document.body.innerHTML = `<div role="button"><span><span>Join now</span></span></div>`;
+    let clicked = false;
+    document.querySelector('[role="button"]')!.addEventListener('click', () => {
+      clicked = true;
+    });
+    expect(await new MeetJoinAutomation(document).clickJoin()).toBe(true);
+    expect(clicked).toBe(true);
+  });
+
+  it('clickJoin prefers "Join now" over a generic "Join with a code"', async () => {
+    document.body.innerHTML = `
+      <button id="generic">Join with a code</button>
+      <button id="real">Join now</button>`;
+    const hits: string[] = [];
+    document.querySelectorAll('button').forEach((b) => {
+      b.addEventListener('click', () => hits.push(b.id));
+    });
+    await new MeetJoinAutomation(document).clickJoin();
+    expect(hits).toEqual(['real']);
+  });
+
+  it('clickJoin skips disabled buttons', async () => {
+    document.body.innerHTML = `<button disabled>Join now</button>`;
+    expect(await new MeetJoinAutomation(document).clickJoin()).toBe(false);
+  });
+
+  it('clickJoin skips aria-disabled buttons', async () => {
+    document.body.innerHTML = `<div role="button" aria-disabled="true">Join now</div>`;
+    expect(await new MeetJoinAutomation(document).clickJoin()).toBe(false);
+  });
+
+  it('isInCall is false on a bare pre-join screen', () => {
+    document.body.innerHTML = `<button>Join now</button>`;
+    expect(new MeetJoinAutomation(document).isInCall()).toBe(false);
+  });
+
+  it('isInCall is true once the captions control exists', () => {
+    document.body.innerHTML = `<div role="button" aria-label="Turn on captions"></div>`;
+    expect(new MeetJoinAutomation(document).isInCall()).toBe(true);
+  });
+
+  it('isInCall is true once participant tiles exist', () => {
+    document.body.innerHTML = `<div data-participant-id="1"></div>`;
+    expect(new MeetJoinAutomation(document).isInCall()).toBe(true);
+  });
+
+  it('isInCall stays false while in the lobby, even if tiles are rendered', () => {
+    document.body.innerHTML = `
+      <div aria-label="Asking to join"></div>
+      <div data-participant-id="1"></div>`;
+    expect(new MeetJoinAutomation(document).isInCall()).toBe(false);
+  });
+
   it('detects the lobby state', () => {
     document.body.innerHTML = `<div aria-label="Asking to join"></div>`;
     expect(new MeetJoinAutomation(document).isInLobby()).toBe(true);
