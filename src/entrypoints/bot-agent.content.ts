@@ -1,5 +1,6 @@
 import { MeetCaptionScraper } from '@/adapters/meet/MeetCaptionScraper';
-import { MeetJoinAutomation } from '@/adapters/meet/MeetJoinAutomation';
+import { joinMeeting, isInCall } from '@/adapters/meet/join';
+import { startCaptions } from '@/adapters/meet/captions';
 import { SegmentBatcher, DEFAULT_BATCHER_OPTIONS } from '@/core/capture/SegmentBatcher';
 import { SystemClock } from '@/core/ports/Clock';
 import { SystemScheduler } from '@/core/ports/Scheduler';
@@ -15,8 +16,6 @@ const ENTER_TIMEOUT_MS = 180_000;
 const ENTER_POLL_MS = 2000;
 const CAPTION_RETRIES = 5;
 const HEALTH_INTERVAL_MS = 30_000;
-/** Backstop: an orphaned bot in an empty meeting ends itself (spec §7.1). */
-const IDLE_END_MS = 900_000;
 
 type BotStatus = 'joining' | 'in-lobby' | 'capturing' | 'ended' | 'failed';
 
@@ -34,54 +33,28 @@ export default defineContentScript({
       send({ type: 'BOT_STATE', sessionId, status, detail });
     };
 
-    const join = new MeetJoinAutomation(document);
-    const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
-
     sendState('joining');
 
-    // 1. Get into the meeting. Each pass mutes, tries to click join, and checks
-    //    whether we are in yet — so if clickJoin() cannot find the button, a
-    //    human clicking it themselves still gets us there.
-    const enterDeadline = Date.now() + ENTER_TIMEOUT_MS;
-    let inCall = false;
-    let announcedLobby = false;
+    // 1. Get into the meeting. joinMeeting mutes on every pass and will not
+    //    click Join until it has confirmed the microphone and camera read as
+    //    off — joining with a live mic is worse than not joining at all. It
+    //    also waits patiently rather than failing fast, so a human clicking
+    //    "Join now" themselves still gets us there.
+    const entered = await joinMeeting(document, {
+      timeoutMs: ENTER_TIMEOUT_MS,
+      pollMs: ENTER_POLL_MS,
+      onLobby: () => sendState('in-lobby'),
+    });
 
-    while (Date.now() < enterDeadline) {
-      if (join.isInCall()) {
-        inCall = true;
-        break;
-      }
-      await join.muteMicAndCamera();
-      if (join.isInLobby()) {
-        if (!announcedLobby) {
-          sendState('in-lobby');
-          announcedLobby = true;
-        }
-      } else {
-        await join.clickJoin();
-      }
-      await sleep(ENTER_POLL_MS);
-    }
-
-    if (!inCall) {
-      sendState(
-        'failed',
-        announcedLobby
-          ? 'not admitted from the lobby within 3 minutes'
-          : 'could not get into the meeting within 3 minutes',
-      );
+    if (!entered.ok) {
+      sendState('failed', entered.error);
       return;
     }
 
     // 2. Turn captions on, with backoff.
-    let captionsOn = false;
-    for (let attempt = 0; attempt < CAPTION_RETRIES; attempt++) {
-      captionsOn = await join.enableCaptions();
-      if (captionsOn) break;
-      await sleep(1000 * 2 ** attempt);
-    }
-    if (!captionsOn) {
-      sendState('failed', 'captions control not found');
+    const captions = await startCaptions(document, { retries: CAPTION_RETRIES });
+    if (!captions.ok) {
+      sendState('failed', captions.error);
       return;
     }
 
@@ -93,6 +66,18 @@ export default defineContentScript({
     );
     const scraper = new MeetCaptionScraper(document, SystemClock);
     await scraper.start(batcher);
+
+    // start() returns silently when it cannot find the caption region, so the
+    // health readout is the only proof an observer was actually attached.
+    // Announcing 'capturing' without checking is how a meeting could report
+    // itself as being recorded while capturing nothing at all.
+    if (!scraper.health().selectorsMatched) {
+      sendState('failed', 'caption region not found — nothing would be captured');
+      batcher.dispose();
+      port.disconnect();
+      return;
+    }
+
     sendState('capturing');
 
     let torndown = false;
@@ -107,12 +92,16 @@ export default defineContentScript({
     };
 
     const health = setInterval(() => {
-      const h = scraper.health();
-      send({ type: 'SOURCE_HEALTH', sessionId, health: h });
-      const idle = h.lastSegmentAt !== null && Date.now() - h.lastSegmentAt > IDLE_END_MS;
-      if (idle && join.participantCount() <= 1) void teardown('ended');
+      send({ type: 'SOURCE_HEALTH', sessionId, health: scraper.health() });
+
+      // Signal 7. The bot being ejected — removed by the host, or the meeting
+      // ending for everyone — leaves it on a post-call screen where captions
+      // simply stop. Reporting presence lets the background worker end the
+      // session now instead of waiting out the stall timeout.
+      send({ type: 'BOT_PRESENCE', sessionId, inCall: isInCall(document) });
     }, HEALTH_INTERVAL_MS);
 
+    // Signal 4.
     addEventListener('pagehide', () => void teardown('ended'));
     port.onDisconnect.addListener(() => void scraper.stop());
   },

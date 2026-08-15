@@ -78,3 +78,39 @@ button {
     color: var(--teal);
   }
 }
+
+#active {
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  border-radius: 8px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+#active .recording {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+#active .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e5484d;
+  animation: saar-pulse 1.6s ease-in-out infinite;
+}
+@keyframes saar-pulse {
+  50% { opacity: 0.25; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #active .dot { animation: none; }
+}
+#active #active-title {
+  margin: 0 0 2px;
+}
+button.danger {
+  background: #e5484d;
+  color: #fff;
+  border-color: #e5484d;
+}
+button.danger:disabled { opacity: 0.6; }

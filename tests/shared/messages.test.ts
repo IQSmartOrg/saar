@@ -24,7 +24,15 @@ describe('message bus', () => {
         case 'SOURCE_HEALTH':
           return `health ${m.health.ok}`;
         case 'USER_LEFT':
-          return 'left';
+          return `left (${m.reason})`;
+        case 'USER_ALIVE':
+          return 'alive';
+        case 'BOT_PRESENCE':
+          return `presence ${m.inCall}`;
+        case 'STOP_REQUESTED':
+          return 'stop';
+        case 'ACTIVE_SESSIONS_QUERY':
+          return 'query';
         default:
           return assertNever(m);
       }
@@ -36,5 +44,9 @@ describe('message bus', () => {
     expect(describeMsg({ type: 'BOT_STATE', sessionId: 's', status: 'capturing' })).toBe(
       'state capturing',
     );
+    expect(
+      describeMsg({ type: 'USER_LEFT', meetingCode: 'abc-defg-hij', reason: 'user-left-meeting' }),
+    ).toBe('left (user-left-meeting)');
+    expect(describeMsg({ type: 'STOP_REQUESTED', sessionId: 's' })).toBe('stop');
   });
 });

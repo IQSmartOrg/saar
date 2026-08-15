@@ -5,6 +5,7 @@ export default tseslint.config(
     ignores: [
       '.wxt/**',
       '.output/**',
+      'dist/**',
       // Stray build trees WXT can drop at the repo root — linting minified
       // bundles produces hundreds of meaningless errors.
       'chrome-mv3/**',
@@ -39,6 +40,15 @@ export default tseslint.config(
             'adapters/meet must stay chrome-free so it ports to Puppeteer. See spec §5.',
         },
       ],
+    },
+  },
+  {
+    // The one deliberate exception: openTab.ts owns the chrome.tabs plumbing so
+    // that every other file in adapters/meet can stay chrome-free. Must come
+    // after the block above — in flat config, later entries win.
+    files: ['src/adapters/meet/openTab.ts'],
+    rules: {
+      'no-restricted-globals': 'off',
     },
   },
 );

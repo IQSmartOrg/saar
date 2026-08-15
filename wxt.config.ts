@@ -2,11 +2,16 @@ import { defineConfig } from 'wxt';
 
 export default defineConfig({
   srcDir: 'src',
+  // Not the default '.output': a dot-directory is hidden in the macOS file
+  // picker, which makes "Load unpacked" needlessly fiddly.
+  outDir: 'dist',
   manifest: {
     name: 'Saar',
     description: 'AI note-taking for your meetings.',
     version: '0.1.0',
-    permissions: ['tabs', 'storage', 'notifications', 'scripting'],
+    // `alarms` drives the stop-signal watchdog: a setTimeout in an MV3 service
+    // worker dies with the worker, so the liveness guarantee needs an alarm.
+    permissions: ['tabs', 'storage', 'notifications', 'scripting', 'alarms'],
     host_permissions: ['https://meet.google.com/*'],
     action: { default_popup: 'popup.html', default_title: 'Saar' },
     icons: {

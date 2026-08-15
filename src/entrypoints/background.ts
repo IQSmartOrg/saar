@@ -3,9 +3,23 @@ import { IndexedDbTranscriptRepository } from '@/adapters/storage/IndexedDbTrans
 import { ChromeSettingsStore } from '@/adapters/storage/ChromeSettingsStore';
 import { SessionRegistry, type ActiveSession } from '@/core/session/sessionState';
 import { newSessionId } from '@/core/types/session';
-import { PORT_NAME, assertNever, type Message } from '@/shared/messaging/messages';
+import {
+  SessionStopWatch,
+  WATCHDOG_TICK_MS,
+  isCleanStop,
+  type ImmediateStopReason,
+  type StopDecision,
+} from '@/core/session/stopSignals';
+import {
+  PORT_NAME,
+  assertNever,
+  type ActiveSessionSummary,
+  type Message,
+} from '@/shared/messaging/messages';
 
 const STATE_KEY = 'saar:sessions';
+const WATCH_KEY = 'saar:stopwatch';
+const WATCHDOG_ALARM = 'saar:watchdog';
 
 export default defineBackground(() => {
   // Composition root: the only place concrete adapters are constructed.
@@ -20,6 +34,49 @@ export default defineBackground(() => {
 
   async function saveRegistry(r: SessionRegistry): Promise<void> {
     await chrome.storage.session.set({ [STATE_KEY]: r.toJSON() });
+  }
+
+  /* ---------------------------------------------------------------- *
+   * Stop signals
+   *
+   * Every one of the nine converges here. The watches are persisted to
+   * chrome.storage.session rather than held in memory because an MV3 worker is
+   * terminated after ~30s idle — an in-memory lastHeartbeatAt would be lost on
+   * every wake, and the watchdog would either never fire or fire immediately.
+   * ---------------------------------------------------------------- */
+
+  async function loadWatches(): Promise<Map<string, SessionStopWatch>> {
+    const raw = await chrome.storage.session.get(WATCH_KEY);
+    const rows = (raw[WATCH_KEY] as unknown[] | undefined) ?? [];
+    const watches = rows.map((r) => SessionStopWatch.fromJSON(r));
+    return new Map(watches.map((w) => [w.sessionId, w]));
+  }
+
+  async function saveWatches(m: Map<string, SessionStopWatch>): Promise<void> {
+    await chrome.storage.session.set({
+      [WATCH_KEY]: [...m.values()].map((w) => w.toJSON()),
+    });
+  }
+
+  /** Applies a mutation to one session's watch and acts on any decision. */
+  async function withWatch(
+    sessionId: string,
+    fn: (w: SessionStopWatch) => StopDecision | null,
+  ): Promise<void> {
+    const watches = await loadWatches();
+    const watch = watches.get(sessionId);
+    if (!watch) return;
+
+    const decision = fn(watch);
+    await saveWatches(watches);
+    if (decision) await endSession(sessionId, decision);
+  }
+
+  /** Resolves a meeting code to its session, for signals that only know the code. */
+  async function signalByCode(code: string, reason: ImmediateStopReason): Promise<void> {
+    const reg = await loadRegistry();
+    const entry = reg.byMeetingCode(code);
+    if (entry) await withWatch(entry.sessionId, (w) => w.signal(reason));
   }
 
   async function notify(title: string, message: string): Promise<void> {
@@ -84,15 +141,27 @@ export default defineBackground(() => {
     };
     reg.add(entry);
     await saveRegistry(reg);
+
+    const watches = await loadWatches();
+    watches.set(sessionId, SessionStopWatch.start(sessionId, Date.now()));
+    await saveWatches(watches);
+    await chrome.alarms.create(WATCHDOG_ALARM, {
+      periodInMinutes: WATCHDOG_TICK_MS / 60_000,
+    });
   }
 
-  async function endSession(sessionId: string): Promise<void> {
+  async function endSession(sessionId: string, decision?: StopDecision): Promise<void> {
     const reg = await loadRegistry();
     const entry = reg.bySessionId(sessionId);
     if (!entry) return; // idempotent — several signals converge here
 
     reg.remove(sessionId);
     await saveRegistry(reg);
+
+    const watches = await loadWatches();
+    watches.delete(sessionId);
+    await saveWatches(watches);
+    if (watches.size === 0) await chrome.alarms.clear(WATCHDOG_ALARM);
 
     // Prefer the bot's own leave(). After a service-worker restart the
     // in-memory bot is gone, so fall back to the tab id we persisted.
@@ -120,13 +189,39 @@ export default defineBackground(() => {
     await repo.updateSession(sessionId, { status: 'ended', endedAt: Date.now() });
     const segments = await repo.getSegments(sessionId);
     const captured = segments.filter((s) => s.final).length;
+
+    // Say why it stopped. A session that ended because captions dried up is a
+    // fault, not a finished meeting, and must not read as one.
+    const why = decision ? ` — ${decision.detail}` : '';
+    if (decision && !isCleanStop(decision.reason)) {
+      await notify('Saar stopped early', `${label}${why} · ${captured} lines kept`);
+      return;
+    }
     await notify(
       captured > 0 ? 'Transcript saved' : 'Meeting ended — nothing captured',
-      captured > 0 ? `${label} · ${captured} lines` : label,
+      captured > 0 ? `${label} · ${captured} lines${why}` : `${label}${why}`,
     );
   }
 
-  chrome.runtime.onMessage.addListener((msg: Message, sender) => {
+  chrome.runtime.onMessage.addListener((msg: Message, sender, sendResponse) => {
+    if (msg.type === 'ACTIVE_SESSIONS_QUERY') {
+      void (async () => {
+        const reg = await loadRegistry();
+        const rows: ActiveSessionSummary[] = [];
+        for (const s of reg.all()) {
+          const stored = await repo.getSession(s.sessionId);
+          rows.push({
+            sessionId: s.sessionId,
+            meetingCode: s.meetingCode,
+            title: stored?.title ?? null,
+            startedAt: stored?.startedAt ?? 0,
+          });
+        }
+        sendResponse(rows);
+      })();
+      return true; // async response
+    }
+
     void (async () => {
       switch (msg.type) {
         case 'MEETING_DETECTED':
@@ -134,17 +229,36 @@ export default defineBackground(() => {
             await startSession(msg.meetingCode, sender.tab.id, msg.title);
           }
           break;
-        case 'USER_LEFT': {
+
+        // Signals 1 and 2 — the user's tab says it is done.
+        case 'USER_LEFT':
+          await signalByCode(msg.meetingCode, msg.reason);
+          break;
+
+        // Signal 5 — liveness.
+        case 'USER_ALIVE': {
           const reg = await loadRegistry();
           const entry = reg.byMeetingCode(msg.meetingCode);
-          if (entry) await endSession(entry.sessionId);
+          if (entry) {
+            await withWatch(entry.sessionId, (w) => {
+              w.heartbeat(Date.now());
+              return null;
+            });
+          }
           break;
         }
+
+        // Signal 8 — Stop pressed in the popup.
+        case 'STOP_REQUESTED':
+          await withWatch(msg.sessionId, (w) => w.signal('manual-stop'));
+          break;
+
         case 'JOIN_CANCELLED':
           break;
         case 'BOT_STATE':
         case 'SEGMENT_BATCH':
         case 'SOURCE_HEALTH':
+        case 'BOT_PRESENCE':
           break; // these arrive over the port, not sendMessage
         default:
           assertNever(msg);
@@ -161,13 +275,34 @@ export default defineBackground(() => {
         switch (msg.type) {
           case 'SEGMENT_BATCH':
             await repo.appendSegments(msg.sessionId, msg.segments);
+            // Feeds signal 9: fresh captions mean capture is alive.
+            await withWatch(msg.sessionId, (w) => {
+              w.segments(Date.now());
+              return null;
+            });
             break;
+
+          // Signal 7 — the bot reporting whether it is still in the call.
+          case 'BOT_PRESENCE':
+            if (!msg.inCall) {
+              await withWatch(msg.sessionId, (w) => w.signal('bot-not-in-call'));
+            }
+            break;
+
           case 'BOT_STATE':
             await repo.updateSession(msg.sessionId, {
               status: msg.status,
               ...(msg.detail === undefined ? {} : { error: msg.detail }),
             });
+            if (msg.status === 'capturing') {
+              await withWatch(msg.sessionId, (w) => {
+                w.captureStarted(Date.now());
+                return null;
+              });
+            }
+            // Signal 4 reaches here: the bot tab tears down and reports 'ended'.
             if (msg.status === 'ended' || msg.status === 'failed') {
+              await withWatch(msg.sessionId, (w) => w.signal('bot-tab-hidden'));
               await endSession(msg.sessionId);
             }
             break;
@@ -186,14 +321,49 @@ export default defineBackground(() => {
     });
   });
 
-  // Belt-and-braces user-left signal: any single signal can be missed if the
-  // service worker was asleep, so all of them converge on endSession, which is
-  // idempotent (spec §7.1).
+  // Signal 3. Either tab closing ends the session.
   chrome.tabs.onRemoved.addListener((tabId) => {
     void (async () => {
       const reg = await loadRegistry();
       const entry = reg.all().find((x) => x.userTabId === tabId || x.botTabId === tabId);
-      if (entry) await endSession(entry.sessionId);
+      if (entry) await withWatch(entry.sessionId, (w) => w.signal('tab-closed'));
     })();
   });
+
+  /**
+   * Signals 6 and 9 — the watchdog.
+   *
+   * chrome.alarms rather than setTimeout: a timer in an MV3 worker dies with
+   * the worker, so the guarantee would silently evaporate exactly when it is
+   * needed. Alarms survive termination and wake the worker to run this.
+   */
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name !== WATCHDOG_ALARM) return;
+    void (async () => {
+      const watches = await loadWatches();
+      if (watches.size === 0) {
+        await chrome.alarms.clear(WATCHDOG_ALARM);
+        return;
+      }
+
+      const now = Date.now();
+      const due: Array<[string, StopDecision]> = [];
+      for (const [id, watch] of watches) {
+        const decision = watch.check(now);
+        if (decision) due.push([id, decision]);
+      }
+      await saveWatches(watches);
+      for (const [id, decision] of due) await endSession(id, decision);
+    })();
+  });
+
+  // The worker may be revived after a restart with sessions still in flight.
+  void (async () => {
+    const watches = await loadWatches();
+    if (watches.size > 0) {
+      await chrome.alarms.create(WATCHDOG_ALARM, {
+        periodInMinutes: WATCHDOG_TICK_MS / 60_000,
+      });
+    }
+  })();
 });

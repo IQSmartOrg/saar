@@ -13,6 +13,12 @@
       </picture>
     </header>
     <div class="body">
+      <section id="active" hidden>
+        <p class="recording"><span class="dot"></span> Recording</p>
+        <p id="active-title">—</p>
+        <p class="hint" id="active-elapsed">—</p>
+        <button id="stop" class="danger">Stop notetaker</button>
+      </section>
       <p id="status">Loading…</p>
       <label for="account">Notetaker account index</label>
       <input id="account" type="number" min="0" step="1" placeholder="e.g. 1" />

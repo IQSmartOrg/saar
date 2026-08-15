@@ -43,8 +43,21 @@ export class MeetCaptionScraper implements TranscriptSource {
     this.matched = this.region() !== null;
   }
 
+  /**
+   * The captions region.
+   *
+   * Falls back to an [aria-live] ancestor of a real caption block only when the
+   * semantic region is missing. The fallback deliberately requires a block to
+   * exist: Meet keeps an empty [aria-live] announcement region on the page at
+   * all times, and matching that unconditionally makes the scraper observe a
+   * node that never receives captions.
+   */
   private region(): Element | null {
-    return this.doc.querySelector(this.selectors.captionRegion);
+    const strict = this.doc.querySelector(this.selectors.captionRegion);
+    if (strict) return strict;
+
+    const block = this.doc.querySelector(this.selectors.captionBlock);
+    return block?.closest('[aria-live]') ?? null;
   }
 
   async start(sink: SegmentSink): Promise<void> {

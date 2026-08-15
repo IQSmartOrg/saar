@@ -1,7 +1,8 @@
 node_modules/
 .wxt/
 .output/
-# WXT has been observed writing a build tree to the repo root; never commit it.
+dist/
+# Stale build trees have appeared at the repo root before; never commit them.
 chrome-mv3/
 firefox-mv2/
 *.zip

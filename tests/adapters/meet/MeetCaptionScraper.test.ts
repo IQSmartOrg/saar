@@ -188,6 +188,16 @@ describe('MeetCaptionScraper', () => {
     await s.stop();
   });
 
+  it('ignores an empty aria-live announcement region', async () => {
+    // Regression: Meet keeps an [aria-live] announcement region on the page
+    // whether or not captions are on. Treating it as the caption region made
+    // captionsAreOn() always true, so CC was never clicked and the scraper
+    // watched a node that never receives captions.
+    document.body.innerHTML = '<div aria-live="polite"></div>';
+    const s = new MeetCaptionScraper(document, clock, MEET_SELECTORS);
+    expect(s.health().selectorsMatched).toBe(false);
+  });
+
   it('health reports ok once segments have been seen', async () => {
     document.body.innerHTML = captionDom([{ speaker: 'Priya Nair', text: 'hello' }]);
     const { sink } = collectingSink();
