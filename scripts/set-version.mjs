@@ -47,12 +47,19 @@ if (version === undefined || !VERSION_RE.test(version)) {
  */
 function replaceOnce(path, pattern, replacement) {
   const before = readFileSync(path, 'utf8');
-  const after = before.replace(pattern, replacement);
-  if (after === before) {
+
+  // Tested explicitly rather than inferred from `after === before`. Those are
+  // not the same thing: when the file already holds the requested version the
+  // replacement is a no-op, and treating that as "line not found" made the
+  // script fail on the most ordinary case there is. The committed version is
+  // deliberately not kept in step with releases, so releasing the version main
+  // happens to carry — always true of the first release — is normal.
+  if (!pattern.test(before)) {
     console.error(`could not find the version line in ${path} (looked for ${pattern}).`);
     process.exit(1);
   }
-  writeFileSync(path, after);
+
+  writeFileSync(path, before.replace(pattern, replacement));
 }
 
 // Anchored to the start of a line at the file's top level, so it cannot match a
