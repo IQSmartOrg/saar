@@ -152,7 +152,20 @@ jobs:
 
           git checkout -b "$BRANCH"
           git add package.json package-lock.json wxt.config.ts
-          git commit -m "release: $TAG"
+
+          # There may be nothing to commit, and that is not an error: the
+          # committed version is deliberately not kept in step with releases, so
+          # releasing the version the repo already carries leaves no diff. `git
+          # commit` exits 1 on an empty commit, which failed a release that had
+          # otherwise fully succeeded. The branch is still created and pushed —
+          # it just points at the same commit as main, which is exactly right,
+          # and target_commitish below still resolves.
+          if git diff --cached --quiet; then
+            echo "Already at $TAG on this commit — branching without a bump commit."
+          else
+            git commit -m "release: $TAG"
+          fi
+
           git push origin "$BRANCH"
 
       - uses: softprops/action-gh-release@v3
