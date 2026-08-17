@@ -109,3 +109,31 @@ describe('eta', () => {
     expect(describeEta(125_000)).toBe('about 2 min left');
   });
 });
+
+describe('one number per surface', () => {
+  it('never shows a call count and a part count that disagree', () => {
+    // The bug: a chip read "0 / 8" (model calls finished) directly above
+    // "part 1 of 7" (chunk being read). Both correct, both describing the same
+    // instant, and together they looked like a contradiction.
+    const job = planJob('s1', transcript(30), { contextTokens: 1000 });
+    const chunks = job.chunkTexts.length;
+    const p = progressOf(job);
+
+    // The sentence counts transcript parts and excludes the merge.
+    expect(describePhase(p)).toContain(`of ${chunks}`);
+    // The percentage counts model calls, including the merge — but carries no
+    // denominator to disagree with.
+    expect(progressPercent(p)).toBe(0);
+    expect(p.total).toBe(chunks + 1);
+  });
+
+  it('keeps the percentage monotonic across the phase change', () => {
+    const job = planJob('s1', transcript(30), { contextTokens: 1000 });
+    const chunks = job.chunkTexts.length;
+    const lastMap = progressPercent(
+      progressOf({ ...job, notes: Array.from({ length: chunks }, () => ({}) as never) }),
+    );
+    const reducing = progressPercent(progressOf({ ...job, phase: 'reducing' }));
+    expect(reducing).toBeGreaterThanOrEqual(lastMap);
+  });
+});

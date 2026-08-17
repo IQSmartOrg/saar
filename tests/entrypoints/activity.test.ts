@@ -70,6 +70,20 @@ describe('card contents', () => {
     expect(root.querySelector('.track')!.getAttribute('aria-valuenow')).toBe('25');
   });
 
+  it('shows a percentage rather than a call fraction', () => {
+    // "0 / 8" counted model calls while the line below counted transcript
+    // parts — two denominators for one moment.
+    renderActivity(root, [processing], noop);
+    expect(root.querySelector('.card-time')?.textContent).toBe('25%');
+    expect(root.textContent).not.toMatch(/\d+\s*\/\s*\d+/);
+  });
+
+  it('keeps the estimate beside the phase, not in the headline slot', () => {
+    renderActivity(root, [{ ...processing, progress: { ...processing.progress, etaMs: 125_000 } }], noop);
+    expect(root.querySelector('.card-time')?.textContent).toBe('25%');
+    expect(root.querySelector('.card-meta')?.textContent).toContain('about 2 min left');
+  });
+
   it('reassures that a failed summary did not lose the transcript', () => {
     renderActivity(root, [failed], noop);
     expect(root.textContent).toContain('No response from localhost:11434');

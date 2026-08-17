@@ -90,11 +90,12 @@ function button(label: string, className: string, onClick: () => void): HTMLButt
 function chip(state: UiStatus, progress?: MomProgress): HTMLElement {
   const node = el('span', `chip ${STATUS_TONE[state]}`);
   if (state === 'recording') node.append(el('span', 'dotp'));
-  // While summarising, the chip carries the count — it is the most useful
-  // thing that can fit, and it moves.
+  // A percentage rather than a fraction: the fraction counted model calls,
+  // which disagreed with every other number on screen. A percentage is
+  // self-contained and still moves.
   const label =
     state === 'processing' && progress !== undefined
-      ? `${progress.done} / ${progress.total}`
+      ? `${progressPercent(progress)}%`
       : STATUS_LABEL[state];
   node.append(document.createTextNode(label));
   return node;
@@ -192,7 +193,9 @@ function stateBox(
   const box = el('div', 'state-box');
 
   if (state === 'processing') {
-    box.append(chip('processing', progress));
+    // No chip here. It counted model calls (0/8) while the line below counted
+    // transcript parts (1 of 7) — both right, both visible, and together they
+    // read as a contradiction. The sentence and the bar are enough.
     const phaseLine = el('div', 'state-t', progress ? describePhase(progress) : 'Writing the minutes…');
     box.append(phaseLine);
     const track = el('div', 'track');

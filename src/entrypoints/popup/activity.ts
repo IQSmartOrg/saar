@@ -84,12 +84,22 @@ function card(a: Activity, on: ActivityHandlers): HTMLElement {
     }
 
     case 'processing': {
+      // Percentage, not a fraction: a "0 / 8" here counted model calls while
+      // the line below counted transcript parts, and the two denominators read
+      // as a contradiction. A percentage has nothing to disagree with.
+      top.append(
+        chip('work', 'Writing minutes'),
+        el('span', 'card-time', `${progressPercent(a.progress)}%`),
+      );
+
+      // The estimate rides with the phase line — the top row is for the
+      // headline number only.
       const eta = describeEta(a.progress.etaMs);
-      top.append(chip('work', 'Writing minutes'));
-      if (eta !== null) top.append(el('span', 'card-time', eta));
+      const detail = eta === null ? describePhase(a.progress) : `${describePhase(a.progress)} · ${eta}`;
+
       node.append(
         el('div', 'card-title', a.title),
-        el('div', 'card-meta', describePhase(a.progress)),
+        el('div', 'card-meta', detail),
         track(progressPercent(a.progress)),
       );
       break;
