@@ -2,7 +2,7 @@ import type { SettingsStore } from '@/core/ports/SettingsStore';
 import type { TranscriptRepository } from '@/core/ports/TranscriptRepository';
 import { JobStore } from '@/processing/JobStore';
 import { MomBuilder, planJob, progressOf, type MomJobState } from '@/processing/MomBuilder';
-import { OpenAiCompatibleClient } from '@/processing/OpenAiCompatibleClient';
+import { createLlmClient } from '@/processing/createClient';
 import type { MomProgress } from '@/processing/types';
 
 /**
@@ -82,7 +82,8 @@ export class MomRunner {
   private async advance(job: MomJobState): Promise<void> {
     const cfg = await this.deps.settings.get();
     const builder = new MomBuilder(
-      new OpenAiCompatibleClient({
+      createLlmClient({
+        providerId: cfg.llmProviderId,
         baseUrl: cfg.llmBaseUrl,
         apiKey: cfg.llmApiKey,
         model: cfg.llmModel,

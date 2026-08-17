@@ -2,7 +2,7 @@ import { ChromeTabBot } from '@/adapters/bot/ChromeTabBot';
 import { IndexedDbTranscriptRepository } from '@/adapters/storage/IndexedDbTranscriptRepository';
 import { ChromeSettingsStore } from '@/adapters/storage/ChromeSettingsStore';
 import { JobStore } from '@/processing/JobStore';
-import { OpenAiCompatibleClient } from '@/processing/OpenAiCompatibleClient';
+import { createLlmClient } from '@/processing/createClient';
 import { MomRunner, MOM_ALARM } from '@/processing/runner';
 import { progressOf } from '@/processing/MomBuilder';
 import { deriveStatus, isJobRunning } from '@/processing/status';
@@ -318,7 +318,8 @@ export default defineBackground(() => {
     if (msg.type === 'LLM_PROBE') {
       void (async () => {
         const cfg = await settings.get();
-        const client = new OpenAiCompatibleClient({
+        const client = createLlmClient({
+          providerId: cfg.llmProviderId,
           baseUrl: cfg.llmBaseUrl,
           apiKey: cfg.llmApiKey,
           model: cfg.llmModel,

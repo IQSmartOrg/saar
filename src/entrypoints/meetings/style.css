@@ -208,7 +208,9 @@ header {
   flex-direction: column;
   gap: 16px;
   min-width: 0;
-  max-width: 880px;
+  /* Was 880px, which left two-thirds of a wide window empty while the content
+     scrolled. The minutes grid below decides its own column widths. */
+  max-width: 1180px;
 }
 
 .d-head {
@@ -288,10 +290,69 @@ header {
 }
 
 /* ── Minutes ──────────────────────────────────────────────────────── */
+/* Narrative left, outcomes in a rail that stays put while you read. */
 .mins {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 336px;
+  gap: 34px;
+  align-items: start;
+}
+.mins.no-rail,
+.mins.rail-only {
+  grid-template-columns: minmax(0, 1fr);
+}
+@media (max-width: 900px) {
+  .mins {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.mins-main {
   display: flex;
   flex-direction: column;
-  gap: 22px;
+  gap: 26px;
+  min-width: 0;
+}
+
+.rail {
+  position: sticky;
+  top: 70px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+@media (max-width: 900px) {
+  .rail {
+    position: static;
+  }
+}
+
+.panel {
+  border: 1px solid color-mix(in srgb, currentColor 15%, transparent);
+  border-radius: 11px;
+  padding: 14px 15px;
+  background: color-mix(in srgb, currentColor 3%, transparent);
+}
+.panel-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  opacity: 0.55;
+  margin-bottom: 12px;
+}
+.count {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 20px;
+  padding: 3px 7px;
+  font-size: 10px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
 }
 .sec-h {
   margin: 0 0 8px;
@@ -312,12 +373,30 @@ header {
 }
 
 .topic {
-  border-left: 2px solid color-mix(in srgb, currentColor 22%, transparent);
-  padding-left: 13px;
-  margin-bottom: 13px;
+  border: 1px solid color-mix(in srgb, currentColor 13%, transparent);
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin-bottom: 10px;
+}
+.topic-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+/* Numbered because topics are in the order discussed — the number is
+   information, not decoration. */
+.topic-n {
+  flex: none;
+  font-size: 10.5px;
+  font-weight: 700;
+  opacity: 0.4;
+  font-variant-numeric: tabular-nums;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .topic-t {
   font-weight: 600;
+  font-size: 14.5px;
 }
 .topic ul {
   margin: 5px 0 0;
@@ -327,79 +406,103 @@ header {
   margin-bottom: 3px;
   opacity: 0.85;
 }
-.topic-s {
-  font-size: 11.5px;
-  opacity: 0.55;
-  margin-top: 5px;
+.who-row {
+  display: flex;
+  gap: 5px;
+  margin-top: 11px;
+  flex-wrap: wrap;
+}
+.who-chip {
+  font-size: 10.5px;
+  font-weight: 600;
+  padding: 4px 8px;
+  border-radius: 20px;
+  background: color-mix(in srgb, currentColor 11%, transparent);
+  opacity: 0.8;
 }
 
-.dec {
+.decision {
   display: flex;
-  gap: 9px;
-  margin-bottom: 10px;
+  gap: 8px;
+  margin-bottom: 11px;
 }
-.dec .tick {
+.decision:last-child {
+  margin-bottom: 0;
+}
+.decision .tick {
   color: var(--green);
   font-weight: 700;
   flex: none;
+  font-size: 12px;
 }
-.dec-c {
-  font-size: 12.5px;
-  opacity: 0.62;
+.d-text {
+  font-size: 13px;
+  line-height: 1.45;
+}
+.d-ctx {
+  font-size: 11.5px;
+  opacity: 0.58;
+  margin-top: 2px;
 }
 
-.action-item {
-  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
-  border-radius: 9px;
-  padding: 11px 13px;
-  margin-bottom: 9px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.action {
+  border-left: 2px solid var(--amber);
+  padding: 2px 0 2px 11px;
+  margin-bottom: 14px;
 }
-.ai-top {
+.action:last-child {
+  margin-bottom: 0;
+}
+.a-top {
   display: flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
+  margin-bottom: 4px;
+  flex-wrap: wrap;
 }
 .owner {
-  background: color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 15%, transparent);
   border-radius: 20px;
-  padding: 3px 10px;
-  font-size: 11.5px;
+  padding: 4px 9px;
+  font-size: 11px;
   font-weight: 600;
 }
-/* Owners are constrained to people who actually spoke — anything else becomes
-   "Unassigned", and must not look like a real name. */
+/* Owners are constrained to people who actually spoke; anything else becomes
+   "Unassigned" and must not look like a real name. */
 .owner.none {
-  opacity: 0.55;
+  opacity: 0.5;
   font-style: italic;
 }
 .due {
-  margin-left: auto;
-  font-size: 11px;
+  font-size: 10.5px;
   opacity: 0.6;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
-.ai-task {
-  font-size: 14px;
+.a-task {
+  font-size: 13px;
+  line-height: 1.45;
 }
-/* The quote is what makes a local model's output checkable. */
+/* The quote is what makes a local model's output checkable — present for
+   verification, but never competing with the task itself. */
 .quote {
-  margin: 0;
-  border-left: 2px solid color-mix(in srgb, currentColor 25%, transparent);
-  padding-left: 10px;
-  font-size: 12.5px;
+  margin: 6px 0 0;
+  padding-left: 9px;
+  border-left: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+  font-size: 11.5px;
   font-style: italic;
-  opacity: 0.65;
+  line-height: 1.45;
+  opacity: 0.6;
 }
 
 .qs {
   margin: 0;
-  padding-left: 18px;
+  padding-left: 16px;
 }
 .qs li {
-  margin-bottom: 5px;
-  opacity: 0.88;
+  font-size: 12.5px;
+  margin-bottom: 7px;
+  opacity: 0.85;
+  line-height: 1.45;
 }
 
 /* ── Transcript ───────────────────────────────────────────────────── */
@@ -546,6 +649,34 @@ header {
 
 /* Section toolbar — belongs to the tab below it, so it sits tight to the tabs
    and slightly indented from the meeting-level actions above. */
-.actions.tools {
-  margin-top: -4px;
+/* Tabs, section actions and re-run on one line — three stacked rows pushed the
+   meeting itself below the fold. */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+}
+.bar .spacer {
+  flex: 1 1 auto;
+}
+.bar .act.quiet {
+  border-color: transparent;
+  opacity: 0.75;
+}
+.bar .act.quiet:hover {
+  opacity: 1;
+}
+
+.d-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+}
+.d-identity {
+  min-width: 0;
 }

@@ -319,20 +319,12 @@ async function renderDetail(): Promise<void> {
     .filter(Boolean)
     .join(' · ');
   head.append(el('div', 'd-meta', meta));
-  detail.append(head);
 
-  // Meeting-level actions only. Copy and Download belong to whichever section
-  // is on screen, so they live under the tabs rather than above them — a
-  // "Copy transcript" button sitting over the Minutes tab is a lie.
-  const actions = el('div', 'actions');
-
-  if (canSummarise(state, finals.length > 0)) {
-    actions.append(
-      button(minutes === null ? 'Summarise' : 'Re-run summary', 'act', () => void retry(session.id)),
-    );
-  }
-
-  actions.append(
+  const top = el('div', 'd-top');
+  const identity = el('div', 'd-identity');
+  identity.append(head);
+  top.append(identity);
+  top.append(
     button('Delete', 'act danger', () => {
       if (!confirm('Delete this meeting, its transcript and its minutes? This cannot be undone.')) {
         return;
@@ -345,9 +337,11 @@ async function renderDetail(): Promise<void> {
       })();
     }),
   );
-  detail.append(actions);
+  detail.append(top);
 
-  // Tabs
+  // One control bar: tabs, the actions that belong to them, and re-run pushed
+  // to the far end. Three stacked rows pushed the meeting itself below the fold.
+  const bar = el('div', 'bar');
   const tabs = el('div', 'tabs');
   const minutesTab = button('Minutes', tab === 'minutes' ? 'on' : '', () => {
     tab = 'minutes';
@@ -358,10 +352,8 @@ async function renderDetail(): Promise<void> {
     void renderDetail();
   });
   tabs.append(minutesTab, transcriptTab);
-  detail.append(tabs);
+  bar.append(tabs);
 
-  // Section toolbar: acts on what is visible.
-  const tools = el('div', 'actions tools');
   const showingMinutes = tab === 'minutes' && minutes !== null;
 
   const copy = button(
@@ -386,9 +378,19 @@ async function renderDetail(): Promise<void> {
   dl.title = 'Minutes and full transcript in one file';
 
   // Nothing worth copying yet on an empty or unwritten section.
-  const hasSomething = showingMinutes || finals.length > 0;
-  if (hasSomething) tools.append(copy, dl);
-  if (tools.children.length > 0) detail.append(tools);
+  if (showingMinutes || finals.length > 0) bar.append(copy, dl);
+
+  bar.append(el('span', 'spacer'));
+  if (canSummarise(state, finals.length > 0)) {
+    bar.append(
+      button(
+        minutes === null ? 'Summarise' : 'Re-run summary',
+        'act quiet',
+        () => void retry(session.id),
+      ),
+    );
+  }
+  detail.append(bar);
 
   // Body
   liveNodes = { sessionId: session.id };

@@ -1,6 +1,11 @@
 import { ChromeSettingsStore } from '@/adapters/storage/ChromeSettingsStore';
 import type { Activity, LlmProbeResult, Message } from '@/shared/messaging/messages';
 import { renderActivity } from '@/entrypoints/popup/activity';
+import {
+  PROVIDERS,
+  providerById,
+  providerForUrl,
+} from '@/processing/providers';
 import { listGoogleAccounts, type GoogleAccount } from '@/adapters/meet/accounts';
 
 const settings = new ChromeSettingsStore();
@@ -72,6 +77,9 @@ const momConfig = document.getElementById('mom-config') as HTMLElement;
 const llmUrl = document.getElementById('llm-url') as HTMLInputElement;
 const llmKey = document.getElementById('llm-key') as HTMLInputElement;
 const llmModel = document.getElementById('llm-model') as HTMLSelectElement;
+const llmProvider = document.getElementById('llm-provider') as HTMLSelectElement;
+const llmRefresh = document.getElementById('llm-refresh') as HTMLButtonElement;
+const llmHint = document.getElementById('llm-hint') as HTMLElement;
 const llmTest = document.getElementById('llm-test') as HTMLButtonElement;
 const llmResult = document.getElementById('llm-result') as HTMLElement;
 
@@ -81,11 +89,47 @@ function syncMomVisibility(): void {
   momConfig.hidden = !momEnabled.checked;
 }
 
+for (const p of PROVIDERS) llmProvider.append(new Option(p.label, p.id));
+
+/**
+ * Switching provider fills in that provider's endpoint, key and model.
+ *
+ * Everything it writes stays editable — the preset is a starting point, and a
+ * user who has customised an endpoint keeps their edits until they explicitly
+ * pick a different provider.
+ */
+llmProvider.addEventListener('change', () => {
+  const provider = providerById(llmProvider.value);
+  llmUrl.value = provider.baseUrl;
+  llmKey.value = provider.apiKey;
+  llmHint.textContent = provider.hint;
+  renderModels(provider.defaultModel === '' ? [] : [provider.defaultModel], provider.defaultModel);
+  clearResult();
+
+  void settings.set({
+    llmProviderId: provider.id,
+    llmBaseUrl: provider.baseUrl,
+    llmApiKey: provider.apiKey,
+    llmModel: provider.defaultModel,
+  });
+
+  // A local provider needs no key, so there is nothing to wait for.
+  if (provider.apiKey !== '') void testConnection();
+});
+
 void (async () => {
   const cfg = await settings.get();
   momEnabled.checked = cfg.momEnabled;
   llmUrl.value = cfg.llmBaseUrl;
   llmKey.value = cfg.llmApiKey;
+
+  // Settings saved before presets existed carry no provider id — infer one
+  // from the URL so the dropdown opens on the right entry.
+  const provider =
+    cfg.llmProviderId === '' ? providerForUrl(cfg.llmBaseUrl) : providerById(cfg.llmProviderId);
+  llmProvider.value = provider.id;
+  llmHint.textContent = provider.hint;
+
   renderModels(cfg.llmModel === '' ? [] : [cfg.llmModel], cfg.llmModel);
   syncMomVisibility();
   // Already configured: refresh the list quietly so the dropdown is live
@@ -175,12 +219,29 @@ function renderModels(models: readonly string[], saved: string): void {
   if (saved !== llmModel.value) void settings.set({ llmModel: llmModel.value });
 }
 
+function clearResult(): void {
+  llmResult.replaceChildren();
+  llmResult.className = 'hint';
+}
+
+/** Result line with a coloured tick or cross, so the state reads at a glance. */
+function showResult(ok: boolean, text: string): void {
+  llmResult.replaceChildren();
+  llmResult.className = `hint result ${ok ? 'ok' : 'bad'}`;
+  const mark = document.createElement('span');
+  mark.className = 'mark';
+  mark.textContent = ok ? '\u2713' : '\u2715';
+  llmResult.append(mark, document.createTextNode(text));
+}
+
 async function testConnection(): Promise<void> {
   llmTest.disabled = true;
-  llmResult.textContent = 'Testing…';
+  llmRefresh.disabled = true;
+  llmResult.className = 'hint';
+  llmResult.textContent = 'Testing\u2026';
   try {
     if (!(await ensureHostPermission())) {
-      llmResult.textContent = '✗ Saar needs permission to reach that address.';
+      showResult(false, 'Saar needs permission to reach that address.');
       return;
     }
 
@@ -193,20 +254,26 @@ async function testConnection(): Promise<void> {
         showOriginFix();
         return;
       }
-      llmResult.textContent = `✗ ${probe?.detail ?? 'could not reach the model'}`;
+      showResult(false, probe?.detail ?? 'could not reach the model');
       return;
     }
 
     const saved = (await settings.get()).llmModel;
     renderModels(probe.models, saved);
-    llmResult.textContent =
+    showResult(
+      true,
       probe.models.length === 0
-        ? '✓ Connected, but no models are installed'
-        : `✓ Connected · ${probe.models.length} model${probe.models.length === 1 ? '' : 's'}`;
+        ? 'Connected, but no models are available'
+        : `Connected \u00b7 ${probe.models.length} model${probe.models.length === 1 ? '' : 's'}`,
+    );
   } finally {
     llmTest.disabled = false;
+    llmRefresh.disabled = false;
   }
 }
+
+// Reloading the model list is the same probe, so the button shares it.
+llmRefresh.addEventListener('click', () => void testConnection());
 
 /**
  * The one-command fix for a local model refusing this extension.
@@ -215,10 +282,7 @@ async function testConnection(): Promise<void> {
  * contains this extension's own id, which nobody can be expected to type.
  */
 function showOriginFix(): void {
-  llmResult.replaceChildren();
-  llmResult.append(
-    document.createTextNode('✗ Ollama is refusing this extension. Run this, then restart Ollama:'),
-  );
+  showResult(false, 'Ollama is refusing this extension. Run this, then restart Ollama:');
 
   const cmd = `launchctl setenv OLLAMA_ORIGINS "chrome-extension://${chrome.runtime.id}"`;
   const code = document.createElement('code');

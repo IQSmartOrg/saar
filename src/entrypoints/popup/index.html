@@ -57,21 +57,31 @@
         <p class="hint">Turns the transcript into a summary, decisions and action items.</p>
 
         <div id="mom-config" hidden>
+          <label for="llm-provider">Provider</label>
+          <select id="llm-provider"></select>
+
           <label for="llm-url">Endpoint</label>
           <input id="llm-url" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
 
           <label for="llm-key">API key</label>
-          <input id="llm-key" type="password" spellcheck="false" placeholder="ollama" />
+          <input id="llm-key" type="password" spellcheck="false" placeholder="sk-…" />
 
           <label for="llm-model">Model</label>
-          <select id="llm-model">
-            <option value="">Connect to load models…</option>
-          </select>
+          <div class="row">
+            <select id="llm-model">
+              <option value="">Test the connection to load models…</option>
+            </select>
+            <button id="llm-refresh" class="icon" type="button" title="Reload models">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                   stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                <path d="M21 3v6h-6" />
+              </svg>
+              <span class="sr-only">Reload models</span>
+            </button>
+          </div>
 
-          <p class="hint">
-            Prefilled for a local Ollama, which keeps everything on this machine. Change it for
-            OpenAI or any OpenAI-compatible provider.
-          </p>
+          <p id="llm-hint" class="hint"></p>
           <button id="llm-test" class="secondary">Test connection</button>
           <p id="llm-result" class="hint"></p>
         </div>

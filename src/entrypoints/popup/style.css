@@ -304,3 +304,73 @@ code.cmd {
   overflow-wrap: anywhere;
   user-select: all;
 }
+
+/* Model row: dropdown plus its reload button. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+.row select {
+  flex: 1 1 auto;
+  margin-bottom: 0;
+}
+button.icon {
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  color: inherit;
+  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
+}
+button.icon:hover:not(:disabled) {
+  background: color-mix(in srgb, currentColor 9%, transparent);
+}
+button.icon:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.icon svg {
+  width: 15px;
+  height: 15px;
+}
+
+/* Connection result: a coloured mark carries the state, the text explains it. */
+.result {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  opacity: 1;
+}
+.result .mark {
+  font-weight: 700;
+  flex: none;
+  line-height: 1.4;
+}
+.result.ok {
+  color: #4fbf9b;
+}
+.result.bad {
+  color: #ff9b9e;
+}
+@media (prefers-color-scheme: light) {
+  .result.ok { color: #1f7a5f; }
+  .result.bad { color: #c0292e; }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}

@@ -26,6 +26,8 @@ describe('action items', () => {
     expect(node.querySelector('.quote')?.textContent).toBe('I will take the rewrite.');
     expect(node.querySelector('.owner')?.textContent).toBe('Ana Roy');
     expect(node.querySelector('.due')?.textContent).toBe('by Thursday');
+    // It belongs to the rail, not the narrative column.
+    expect(node.querySelector('.rail .action')).not.toBeNull();
   });
 
   it('marks an unassigned owner as different from a real name', () => {
@@ -59,6 +61,18 @@ describe('sections', () => {
     expect(headings).toEqual(['Summary']);
   });
 
+  it('numbers topics in the order they were discussed', () => {
+    const node = renderMinutes(
+      minutes({
+        topics: [
+          { title: 'First', points: [], speakers: [] },
+          { title: 'Second', points: [], speakers: [] },
+        ],
+      }),
+    );
+    expect([...node.querySelectorAll('.topic-n')].map((n) => n.textContent)).toEqual(['01', '02']);
+  });
+
   it('renders topics with their points and speakers', () => {
     const node = renderMinutes(
       minutes({
@@ -67,15 +81,64 @@ describe('sections', () => {
     );
     expect(node.querySelector('.topic-t')?.textContent).toBe('Release timing');
     expect(node.querySelector('.topic li')?.textContent).toBe('QA is green');
-    expect(node.querySelector('.topic-s')?.textContent).toBe('Ana, Bo');
+    // Speakers are chips now, not a run-on grey line.
+    expect([...node.querySelectorAll('.who-chip')].map((c) => c.textContent)).toEqual(['Ana', 'Bo']);
   });
 
   it('renders a decision with its context', () => {
     const node = renderMinutes(
       minutes({ decisions: [{ decision: 'Ship Friday', context: 'QA is green' }] }),
     );
-    expect(node.querySelector('.dec')?.textContent).toContain('Ship Friday');
-    expect(node.querySelector('.dec-c')?.textContent).toBe('QA is green');
+    expect(node.querySelector('.decision')?.textContent).toContain('Ship Friday');
+    expect(node.querySelector('.d-ctx')?.textContent).toBe('QA is green');
+  });
+});
+
+describe('outcomes go in the rail, narrative in the main column', () => {
+  const full = minutes({
+    summary: 'We met.',
+    topics: [{ title: 'Release', points: ['QA green'], speakers: ['Ana'] }],
+    decisions: [{ decision: 'Ship Friday', context: '' }],
+    actionItems: [{ owner: 'Ana', task: 'Cut the build', due: null, quote: '' }],
+    openQuestions: ['Who tells support?'],
+  });
+
+  it('puts summary and topics in the main column', () => {
+    const node = renderMinutes(full);
+    expect(node.querySelector('.mins-main .summary')).not.toBeNull();
+    expect(node.querySelector('.mins-main .topic')).not.toBeNull();
+  });
+
+  it('puts every actionable section in the rail', () => {
+    // These were below every topic before — a long scroll past the narrative
+    // to reach the only part anyone has to act on.
+    const node = renderMinutes(full);
+    const headings = [...node.querySelectorAll('.rail .panel-h')].map(
+      (h) => h.firstChild?.textContent,
+    );
+    expect(headings).toEqual(['Action items', 'Decisions', 'Open questions']);
+  });
+
+  it('shows each panel count without opening it', () => {
+    const node = renderMinutes(full);
+    expect([...node.querySelectorAll('.rail .count')].map((c) => c.textContent)).toEqual([
+      '1',
+      '1',
+      '1',
+    ]);
+  });
+
+  it('gives the narrative full width when there are no outcomes', () => {
+    const node = renderMinutes(minutes({ summary: 'Just a chat.' }));
+    expect(node.classList.contains('no-rail')).toBe(true);
+    expect(node.querySelector('.rail')).toBeNull();
+  });
+
+  it('gives the rail full width when there is no narrative', () => {
+    const node = renderMinutes(
+      minutes({ decisions: [{ decision: 'Ship it', context: '' }] }),
+    );
+    expect(node.classList.contains('rail-only')).toBe(true);
   });
 });
 

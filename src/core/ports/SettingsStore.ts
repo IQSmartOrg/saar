@@ -11,6 +11,8 @@ export interface Settings {
    * and seen where it is going.
    */
   readonly momEnabled: boolean;
+  /** Which preset the endpoint came from — see processing/providers.ts. */
+  readonly llmProviderId: string;
   readonly llmBaseUrl: string;
   readonly llmApiKey: string;
   readonly llmModel: string;
@@ -28,9 +30,10 @@ export const DEFAULT_SETTINGS: Settings = {
   toastDelayMs: 5000,
 
   momEnabled: false,
+  llmProviderId: 'ollama',
   llmBaseUrl: 'http://localhost:11434/v1',
   llmApiKey: 'ollama',
-  llmModel: 'qwen3:14b',
+  llmModel: '',
   llmContextTokens: 4096,
 };
 
