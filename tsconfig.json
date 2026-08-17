@@ -1,6 +1,12 @@
 {
   "extends": "./.wxt/tsconfig.json",
   "compilerOptions": {
+    // Restated here even though .wxt/tsconfig.json declares them: paths in the
+    // generated config are relative to `.wxt/`, which dependency-cruiser does
+    // not follow through the `extends` chain. Without these it resolves nothing
+    // and every boundary rule passes vacuously.
+    "baseUrl": ".",
+    "paths": { "@/*": ["src/*"] },
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,

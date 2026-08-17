@@ -1,5 +1,5 @@
-import type { SessionStatus } from '@/core/types/session';
-import type { MomPhase } from '@/processing/types';
+import type { SessionStatus } from '@/session/types';
+import type { MomPhase } from '@/processing/mom/types';
 
 /**
  * The one place a meeting's displayed status is decided.
@@ -21,6 +21,8 @@ export type UiStatus =
   | 'recording'
   /** Transcript captured, minutes being written right now. */
   | 'processing'
+  /** A summarisation job exists but the user has stopped it part-way. */
+  | 'paused'
   /** Minutes written. */
   | 'ready'
   /** Summarising was attempted and failed. The transcript survives. */
@@ -32,6 +34,8 @@ export interface StatusInputs {
   readonly status: SessionStatus;
   /** Phase of the live summarisation job, or undefined when there is none. */
   readonly jobPhase?: MomPhase;
+  /** True when that job has been paused by the user. */
+  readonly jobPaused?: boolean;
   readonly hasMinutes: boolean;
 }
 
@@ -41,7 +45,7 @@ export function isJobRunning(phase: MomPhase | undefined): boolean {
 }
 
 export function deriveStatus(input: StatusInputs): UiStatus {
-  const { status, jobPhase, hasMinutes } = input;
+  const { status, jobPhase, jobPaused, hasMinutes } = input;
 
   // 1. Live meetings win outright. Nothing about summarising can be true yet.
   if (status === 'joining' || status === 'in-lobby' || status === 'capturing') {
@@ -51,7 +55,9 @@ export function deriveStatus(input: StatusInputs): UiStatus {
   // 2. A running job beats whatever the session row says. This covers the gap
   //    between queueing a job and marking the session 'summarizing' — without
   //    it, a meeting actively being summarised shows as a plain transcript.
-  if (isJobRunning(jobPhase)) return 'processing';
+  //    A paused job is still a job — it holds the work done so far, so the
+  //    meeting must not fall back to 'transcript' and offer to start over.
+  if (isJobRunning(jobPhase)) return jobPaused === true ? 'paused' : 'processing';
 
   // 3. The stored status says summarising but no job is running: the worker
   //    died between finishing the job and updating the row. Trust the data that
@@ -73,6 +79,7 @@ export function deriveStatus(input: StatusInputs): UiStatus {
 export const STATUS_LABEL: Record<UiStatus, string> = {
   recording: 'Rec',
   processing: 'Writing',
+  paused: 'Paused',
   ready: 'Ready',
   failed: 'Failed',
   transcript: 'Transcript',
@@ -82,12 +89,19 @@ export const STATUS_LABEL: Record<UiStatus, string> = {
 export const STATUS_TONE: Record<UiStatus, string> = {
   recording: 'live',
   processing: 'work',
+  paused: 'hold',
   ready: 'ready',
   failed: 'bad',
   transcript: 'plain',
 };
 
-/** Whether re-running summarisation makes sense for this meeting. */
+/**
+ * Whether re-running summarisation makes sense for this meeting.
+ *
+ * Not while a job is live, paused included: a paused job holds the chunks
+ * already summarised, and offering "Summarise" beside "Resume" invites throwing
+ * that work away by accident.
+ */
 export function canSummarise(status: UiStatus, hasTranscript: boolean): boolean {
   if (!hasTranscript) return false;
   return status === 'ready' || status === 'failed' || status === 'transcript';

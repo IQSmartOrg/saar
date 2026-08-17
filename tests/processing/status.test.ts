@@ -7,8 +7,8 @@ import {
   STATUS_TONE,
   type UiStatus,
 } from '@/processing/status';
-import type { SessionStatus } from '@/core/types/session';
-import type { MomPhase } from '@/processing/types';
+import type { SessionStatus } from '@/session/types';
+import type { MomPhase } from '@/processing/mom/types';
 
 const NO_MINUTES = { hasMinutes: false } as const;
 const WITH_MINUTES = { hasMinutes: true } as const;
@@ -114,5 +114,38 @@ describe('presentation tables stay complete', () => {
       expect(STATUS_LABEL[s]).toBeTruthy();
       expect(STATUS_TONE[s]).toBeTruthy();
     }
+  });
+});
+
+describe('a paused summarisation job', () => {
+  it('reads as paused, not as processing', () => {
+    expect(
+      deriveStatus({ status: 'summarizing', jobPhase: 'mapping', jobPaused: true, hasMinutes: false }),
+    ).toBe('paused');
+  });
+
+  it('does not fall back to plain transcript — the partial work still exists', () => {
+    // Falling through to 'transcript' would offer "Summarise" and quietly throw
+    // away every chunk already written.
+    const status = deriveStatus({
+      status: 'summarizing',
+      jobPhase: 'reducing',
+      jobPaused: true,
+      hasMinutes: false,
+    });
+    expect(status).toBe('paused');
+    expect(canSummarise(status, true)).toBe(false);
+  });
+
+  it('still loses to a live meeting', () => {
+    expect(
+      deriveStatus({ status: 'capturing', jobPhase: 'mapping', jobPaused: true, hasMinutes: false }),
+    ).toBe('recording');
+  });
+
+  it('treats an absent flag as running, for rows written before pause existed', () => {
+    expect(deriveStatus({ status: 'summarizing', jobPhase: 'mapping', hasMinutes: false })).toBe(
+      'processing',
+    );
   });
 });
