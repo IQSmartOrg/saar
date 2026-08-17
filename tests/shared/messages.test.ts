@@ -31,8 +31,14 @@ describe('message bus', () => {
           return `presence ${m.inCall}`;
         case 'STOP_REQUESTED':
           return 'stop';
-        case 'ACTIVE_SESSIONS_QUERY':
-          return 'query';
+        case 'ACTIVITY_QUERY':
+          return 'activity';
+        case 'RETRY_REQUESTED':
+          return 'retry';
+        case 'MOM_PROGRESS':
+          return `mom ${m.progress.phase}`;
+        case 'LLM_PROBE':
+          return 'llm probe';
         default:
           return assertNever(m);
       }

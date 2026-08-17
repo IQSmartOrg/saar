@@ -1,4 +1,5 @@
 import type { MeetingSession } from '@/core/types/session';
+import type { MeetingMinutes } from '@/core/types/minutes';
 import type { TranscriptSegment } from '@/core/types/transcript';
 
 export function formatTimestamp(seconds: number): string {
@@ -45,4 +46,75 @@ export function transcriptToMarkdown(
     out += `**${who}** [${formatTimestamp(s.tStart)}] ${s.text}\n\n`;
   }
   return out;
+}
+
+/** Minutes alone, for the clipboard when someone wants just the outcome. */
+export function minutesToMarkdown(minutes: MeetingMinutes): string {
+  if (minutes.raw !== undefined && minutes.topics.length === 0) {
+    // Unparseable model output was kept verbatim rather than discarded.
+    return `## Summary\n\n${minutes.raw.trim()}\n`;
+  }
+
+  let out = '';
+  if (minutes.summary !== '') out += `## Summary\n\n${minutes.summary}\n\n`;
+
+  if (minutes.topics.length > 0) {
+    out += `## Topics\n\n`;
+    for (const t of minutes.topics) {
+      out += `### ${t.title}\n\n`;
+      for (const p of t.points) out += `- ${p}\n`;
+      if (t.speakers.length > 0) out += `\n_${t.speakers.join(', ')}_\n`;
+      out += '\n';
+    }
+  }
+
+  if (minutes.decisions.length > 0) {
+    out += `## Decisions\n\n`;
+    for (const d of minutes.decisions) {
+      out += `- **${d.decision}**`;
+      out += d.context === '' ? '\n' : ` — ${d.context}\n`;
+    }
+    out += '\n';
+  }
+
+  if (minutes.actionItems.length > 0) {
+    out += `## Action items\n\n`;
+    for (const a of minutes.actionItems) {
+      const due = a.due === null ? '' : ` _(by ${a.due})_`;
+      out += `- **${a.owner}** — ${a.task}${due}\n`;
+      // The quote is what makes a local model's output checkable, so it
+      // survives the export rather than being a UI-only flourish.
+      if (a.quote !== '') out += `  > ${a.quote}\n`;
+    }
+    out += '\n';
+  }
+
+  if (minutes.openQuestions.length > 0) {
+    out += `## Open questions\n\n`;
+    for (const q of minutes.openQuestions) out += `- ${q}\n`;
+    out += '\n';
+  }
+
+  return out;
+}
+
+/**
+ * The whole meeting: minutes first, then the transcript they came from.
+ *
+ * Both, always. Minutes without the transcript lose the evidence, and a reader
+ * who wants to check a claim should not have to go back for a second file.
+ */
+export function meetingToMarkdown(
+  session: MeetingSession,
+  segments: readonly TranscriptSegment[],
+  minutes: MeetingMinutes | null,
+): string {
+  const transcript = transcriptToMarkdown(session, segments);
+  if (minutes === null) return transcript;
+
+  // Splice the minutes between the header block and the transcript heading.
+  const marker = '\n## Transcript\n';
+  const at = transcript.indexOf(marker);
+  if (at === -1) return `${transcript}\n${minutesToMarkdown(minutes)}`;
+  return `${transcript.slice(0, at)}\n${minutesToMarkdown(minutes)}${transcript.slice(at)}`;
 }

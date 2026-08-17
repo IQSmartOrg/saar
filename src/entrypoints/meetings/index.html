@@ -10,13 +10,24 @@
     <header>
       <picture>
         <source media="(prefers-color-scheme: dark)" srcset="/logo-lockup-dark.png" />
-        <img src="/logo-lockup.png" alt="Saar" height="28" />
+        <img src="/logo-lockup.png" alt="Saar" height="26" />
       </picture>
+      <input
+        id="search"
+        type="search"
+        placeholder="Search meetings and transcripts…"
+        spellcheck="false"
+        aria-label="Search meetings and transcripts"
+      />
     </header>
-    <main>
-      <ul id="list"></ul>
-      <section id="detail" hidden></section>
+
+    <main class="split">
+      <aside class="list" aria-label="Meetings">
+        <div id="list"></div>
+      </aside>
+      <section id="detail" class="detail" aria-live="polite"></section>
     </main>
+
     <script type="module" src="./main.ts"></script>
   </body>
 </html>

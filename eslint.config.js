@@ -43,6 +43,23 @@ export default tseslint.config(
     },
   },
   {
+    // The processing pipeline is pure except for the two files that persist and
+    // schedule it. Keeping the rest chrome-free is what lets the chunker, the
+    // prompts and the map-reduce engine be tested without a browser.
+    files: ['src/processing/**/*.ts'],
+    ignores: ['src/processing/JobStore.ts', 'src/processing/runner.ts'],
+    rules: {
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'chrome',
+          message:
+            'Only JobStore.ts and runner.ts may touch chrome.* — the rest of src/processing must stay testable without a browser.',
+        },
+      ],
+    },
+  },
+  {
     // The one deliberate exception: openTab.ts owns the chrome.tabs plumbing so
     // that every other file in adapters/meet can stay chrome-free. Must come
     // after the block above — in flat config, later entries win.

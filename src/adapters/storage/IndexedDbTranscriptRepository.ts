@@ -1,9 +1,10 @@
 import type { TranscriptRepository } from '@/core/ports/TranscriptRepository';
 import type { MeetingSession } from '@/core/types/session';
 import type { TranscriptSegment } from '@/core/types/transcript';
+import type { MeetingMinutes } from '@/core/types/minutes';
 
 export const DB_NAME = 'saar';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 /**
  * Segments are keyed by the compound `[sessionId, segId]` so `put()` gives
@@ -48,6 +49,11 @@ export class IndexedDbTranscriptRepository implements TranscriptRepository {
           const g = db.createObjectStore('segments', { keyPath: ['sessionId', 'segId'] });
           g.createIndex('sessionId', 'sessionId');
         }
+        // v2. Minutes are stored apart from sessions so re-running a summary
+        // never risks rewriting the session row the transcript hangs off.
+        if (!db.objectStoreNames.contains('minutes')) {
+          db.createObjectStore('minutes', { keyPath: 'sessionId' });
+        }
       };
       req.onsuccess = () => resolve(req.result);
       req.onerror = () => reject(req.error);
@@ -84,12 +90,13 @@ export class IndexedDbTranscriptRepository implements TranscriptRepository {
 
   async deleteSession(id: string): Promise<void> {
     const db = await this.db();
-    const t = db.transaction(['sessions', 'segments'], 'readwrite');
+    const t = db.transaction(['sessions', 'segments', 'minutes'], 'readwrite');
     const segments = t.objectStore('segments');
     const keys = await promisify<IDBValidKey[]>(
       segments.index('sessionId').getAllKeys(IDBKeyRange.only(id)),
     );
     t.objectStore('sessions').delete(id);
+    t.objectStore('minutes').delete(id);
     for (const k of keys) segments.delete(k);
     await awaitTx(t);
   }
@@ -114,5 +121,22 @@ export class IndexedDbTranscriptRepository implements TranscriptRepository {
     return rows
       .sort((a, b) => a.tStart - b.tStart)
       .map(({ sessionId: _sessionId, segId: _segId, ...segment }) => segment);
+  }
+
+  async saveMinutes(id: string, minutes: MeetingMinutes): Promise<void> {
+    const store = await this.store('minutes', 'readwrite');
+    await promisify(store.put({ sessionId: id, minutes }));
+  }
+
+  async listMinutesIds(): Promise<readonly string[]> {
+    const store = await this.store('minutes', 'readonly');
+    const keys = await promisify<IDBValidKey[]>(store.getAllKeys());
+    return keys.map(String);
+  }
+
+  async getMinutes(id: string): Promise<MeetingMinutes | null> {
+    const store = await this.store('minutes', 'readonly');
+    const row = await promisify<{ minutes: MeetingMinutes } | undefined>(store.get(id));
+    return row?.minutes ?? null;
   }
 }

@@ -91,7 +91,22 @@ export default defineContentScript({
       port.disconnect();
     };
 
+    // Belt-and-braces flush. The batcher already flushes every 2s, but that
+    // timer only runs while captions keep arriving — and `pagehide` does not
+    // fire on a crash, a force-quit, or a tab Chrome discards under memory
+    // pressure. Flushing when the tab is hidden or frozen means the live
+    // transcript is never more than a couple of seconds behind on disk.
+    const flush = (): void => batcher.flushNow();
+    addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') flush();
+    });
+    addEventListener('freeze', flush);
+    addEventListener('beforeunload', flush);
+
     const health = setInterval(() => {
+      // Nothing should be pending this long, but a missed flush would strand
+      // the tail of the meeting, so force one on every health tick.
+      flush();
       send({ type: 'SOURCE_HEALTH', sessionId, health: scraper.health() });
 
       // Signal 7. The bot being ejected — removed by the host, or the meeting

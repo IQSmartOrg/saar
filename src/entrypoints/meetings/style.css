@@ -1,16 +1,25 @@
 :root {
   --teal: #1a414e;
   --mint: #d9efea;
-  --bg: #fff;
-  --fg: var(--teal);
-  --surface: var(--mint);
+  --signal: #e5484d;
+  --amber: #d8a657;
+  --green: #4fbf9b;
+
+  --bg: #f4f8f7;
+  --surface: #fff;
+  --fg: #0d2028;
+  --fg-dim: #4a6670;
+  --rule: #ccdcd8;
+  --radius: 10px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #10262d;
+    --bg: #0a1a20;
+    --surface: #10262d;
     --fg: var(--mint);
-    --surface: #17323b;
+    --fg-dim: #8aa8b0;
+    --rule: #1d3d47;
   }
 }
 
@@ -20,84 +29,523 @@
 
 body {
   margin: 0;
-  font: 15px/1.5 system-ui, sans-serif;
-  color: var(--fg);
   background: var(--bg);
+  color: var(--fg);
+  font: 14px/1.55 system-ui, -apple-system, 'Segoe UI', sans-serif;
+  -webkit-font-smoothing: antialiased;
 }
 
+/* ── Header ───────────────────────────────────────────────────────── */
 header {
-  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 12px 20px;
   background: var(--surface);
+  border-bottom: 1px solid var(--rule);
+  position: sticky;
+  top: 0;
+  z-index: 5;
 }
 
-main {
+#search {
+  flex: 0 1 320px;
+  padding: 7px 11px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+}
+
+/* ── Layout ───────────────────────────────────────────────────────── */
+.split {
   display: grid;
-  grid-template-columns: 320px 1fr;
-  gap: 24px;
-  padding: 24px;
+  grid-template-columns: 292px 1fr;
   align-items: start;
+  min-height: calc(100vh - 55px);
 }
 
-@media (max-width: 720px) {
-  main {
+@media (max-width: 760px) {
+  .split {
     grid-template-columns: 1fr;
+  }
+  .list {
+    border-right: 0;
+    border-bottom: 1px solid var(--rule);
+    max-height: 40vh;
   }
 }
 
-ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
+.list {
+  border-right: 1px solid var(--rule);
+  padding: 8px;
+  position: sticky;
+  top: 55px;
+  max-height: calc(100vh - 55px);
+  overflow-y: auto;
 }
 
-li {
-  padding: 12px;
-  border-radius: 10px;
+.grouphead {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.5;
+  padding: 14px 8px 6px;
+}
+
+.item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 100%;
+  padding: 9px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
   cursor: pointer;
 }
-
-li:hover,
-li[aria-selected='true'] {
-  background: var(--surface);
+.item:hover {
+  background: color-mix(in srgb, currentColor 7%, transparent);
+}
+.item.on {
+  background: color-mix(in srgb, currentColor 13%, transparent);
 }
 
-li h3 {
-  margin: 0 0 4px;
-  font-size: 15px;
+.item-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.item-t {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.item-m {
+  font-size: 11.5px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
 }
 
-li small {
+/* ── Status chips ─────────────────────────────────────────────────── */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  padding: 4px 6px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.chip.live {
+  background: color-mix(in srgb, var(--signal) 18%, transparent);
+  color: var(--signal);
+}
+.chip.work {
+  background: color-mix(in srgb, var(--amber) 22%, transparent);
+  color: #9a6f14;
+}
+.chip.ready {
+  background: color-mix(in srgb, var(--green) 20%, transparent);
+  color: #1f7a5f;
+}
+.chip.bad {
+  background: color-mix(in srgb, var(--signal) 18%, transparent);
+  color: var(--signal);
+}
+.chip.plain {
+  background: color-mix(in srgb, currentColor 12%, transparent);
   opacity: 0.7;
 }
 
-button {
-  background: var(--teal);
-  color: var(--mint);
-  border: 0;
-  border-radius: 8px;
-  padding: 8px 14px;
-  cursor: pointer;
-  font: inherit;
-  margin: 0 8px 16px 0;
-}
-
 @media (prefers-color-scheme: dark) {
-  button {
-    background: var(--mint);
-    color: var(--teal);
+  .chip.live,
+  .chip.bad {
+    color: #ff9b9e;
+  }
+  .chip.work {
+    color: var(--amber);
+  }
+  .chip.ready {
+    color: var(--green);
   }
 }
 
-.line {
-  margin: 0 0 10px;
+.dotp {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .dotp {
+    animation: saar-pulse 1.7s ease-in-out infinite;
+  }
+}
+@keyframes saar-pulse {
+  50% {
+    opacity: 0.3;
+  }
 }
 
+/* ── Detail ───────────────────────────────────────────────────────── */
+.detail {
+  padding: 22px 26px 60px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  max-width: 880px;
+}
+
+.d-head {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.d-title {
+  margin: 0;
+  font-size: 23px;
+  font-weight: 600;
+  line-height: 1.2;
+  text-wrap: balance;
+}
+.d-meta {
+  font-size: 12px;
+  opacity: 0.6;
+  font-variant-numeric: tabular-nums;
+}
+
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+.act {
+  border: 1px solid color-mix(in srgb, currentColor 28%, transparent);
+  background: transparent;
+  color: inherit;
+  border-radius: 7px;
+  padding: 7px 12px;
+  font: 600 12.5px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+}
+.act:hover {
+  background: color-mix(in srgb, currentColor 8%, transparent);
+}
+.act.primary {
+  background: var(--fg);
+  color: var(--bg);
+  border-color: var(--fg);
+}
+/* Pushed away from the rest: it removes the transcript too, and cannot be undone. */
+.act.danger {
+  margin-left: auto;
+  color: var(--signal);
+  border-color: color-mix(in srgb, var(--signal) 45%, transparent);
+}
+.act.danger:hover {
+  background: color-mix(in srgb, var(--signal) 12%, transparent);
+}
+
+.tabs {
+  display: flex;
+  gap: 3px;
+  padding: 3px;
+  background: color-mix(in srgb, currentColor 9%, transparent);
+  border-radius: 8px;
+  align-self: flex-start;
+}
+.tabs button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  padding: 6px 14px;
+  border-radius: 6px;
+  font: 600 12.5px/1 inherit;
+  font-family: inherit;
+  cursor: pointer;
+  opacity: 0.6;
+}
+.tabs button.on {
+  background: var(--fg);
+  color: var(--bg);
+  opacity: 1;
+}
+
+/* ── Minutes ──────────────────────────────────────────────────────── */
+.mins {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.sec-h {
+  margin: 0 0 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  opacity: 0.5;
+}
+.summary {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.65;
+  max-width: 68ch;
+}
+.summary.raw {
+  white-space: pre-wrap;
+}
+
+.topic {
+  border-left: 2px solid color-mix(in srgb, currentColor 22%, transparent);
+  padding-left: 13px;
+  margin-bottom: 13px;
+}
+.topic-t {
+  font-weight: 600;
+}
+.topic ul {
+  margin: 5px 0 0;
+  padding-left: 18px;
+}
+.topic li {
+  margin-bottom: 3px;
+  opacity: 0.85;
+}
+.topic-s {
+  font-size: 11.5px;
+  opacity: 0.55;
+  margin-top: 5px;
+}
+
+.dec {
+  display: flex;
+  gap: 9px;
+  margin-bottom: 10px;
+}
+.dec .tick {
+  color: var(--green);
+  font-weight: 700;
+  flex: none;
+}
+.dec-c {
+  font-size: 12.5px;
+  opacity: 0.62;
+}
+
+.action-item {
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 9px;
+  padding: 11px 13px;
+  margin-bottom: 9px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ai-top {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.owner {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 20px;
+  padding: 3px 10px;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+/* Owners are constrained to people who actually spoke — anything else becomes
+   "Unassigned", and must not look like a real name. */
+.owner.none {
+  opacity: 0.55;
+  font-style: italic;
+}
+.due {
+  margin-left: auto;
+  font-size: 11px;
+  opacity: 0.6;
+}
+.ai-task {
+  font-size: 14px;
+}
+/* The quote is what makes a local model's output checkable. */
+.quote {
+  margin: 0;
+  border-left: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+  padding-left: 10px;
+  font-size: 12.5px;
+  font-style: italic;
+  opacity: 0.65;
+}
+
+.qs {
+  margin: 0;
+  padding-left: 18px;
+}
+.qs li {
+  margin-bottom: 5px;
+  opacity: 0.88;
+}
+
+/* ── Transcript ───────────────────────────────────────────────────── */
+.lines {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.line {
+  display: grid;
+  grid-template-columns: 132px 1fr;
+  gap: 14px;
+  align-items: baseline;
+}
+@media (max-width: 560px) {
+  .line {
+    grid-template-columns: 1fr;
+    gap: 2px;
+  }
+  .who {
+    justify-content: flex-start !important;
+  }
+}
 .who {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 7px;
+  min-width: 0;
+}
+.who-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tstamp {
+  font-size: 10.5px;
+  opacity: 0.42;
+  font-variant-numeric: tabular-nums;
+  flex: none;
+}
+.said {
+  opacity: 0.92;
+}
+
+/* ── States ───────────────────────────────────────────────────────── */
+.state-box {
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 10px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-start;
+  max-width: 56ch;
+}
+.state-box.bad {
+  border-color: color-mix(in srgb, var(--signal) 40%, transparent);
+}
+.state-t {
   font-weight: 600;
 }
 
-.ts {
+.track {
+  width: 100%;
+  height: 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, currentColor 18%, transparent);
+  overflow: hidden;
+}
+.track span {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: currentColor;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .track span {
+    transition: width 0.35s ease;
+  }
+}
+
+.note {
+  margin: 0;
+  font-size: 12px;
+  opacity: 0.62;
+  line-height: 1.5;
+}
+.empty-t {
+  margin: 0 0 4px;
+  font-weight: 600;
+}
+.list-empty,
+.detail-empty {
+  padding: 26px 14px;
+  text-align: center;
+}
+.detail-empty {
+  padding-top: 70px;
+}
+
+:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+
+/* Interim caption blocks: Meet is still revising the text, so they are shown
+   during a live meeting but marked as not yet settled. */
+.line.interim .said {
   opacity: 0.6;
-  font-variant-numeric: tabular-nums;
-  margin: 0 6px;
+}
+.line.interim .said::after {
+  content: '…';
+  opacity: 0.5;
+}
+
+/* Copy confirmation. */
+.act.copied {
+  border-color: color-mix(in srgb, var(--green) 55%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 12%, transparent);
+  opacity: 1;
+}
+.act.copied .tick-in {
+  margin-right: 6px;
+  font-weight: 700;
+}
+@media (prefers-reduced-motion: no-preference) {
+  .act.copied .tick-in {
+    animation: saar-pop 0.28s ease-out;
+  }
+}
+@keyframes saar-pop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+}
+
+
+/* Section toolbar — belongs to the tab below it, so it sits tight to the tabs
+   and slightly indented from the meeting-level actions above. */
+.actions.tools {
+  margin-top: -4px;
 }

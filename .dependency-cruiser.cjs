@@ -8,6 +8,13 @@ module.exports = {
       to: { path: '^src/(adapters|entrypoints)' },
     },
     {
+      name: 'processing-stays-portable',
+      severity: 'error',
+      comment: 'src/processing must not depend on extension entrypoints or Meet adapters',
+      from: { path: '^src/processing' },
+      to: { path: '^src/(entrypoints|adapters)' },
+    },
+    {
       name: 'no-circular',
       severity: 'error',
       from: {},

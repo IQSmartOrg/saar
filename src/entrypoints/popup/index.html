@@ -12,21 +12,70 @@
         <img src="/logo-lockup.png" alt="Saar" height="22" />
       </picture>
     </header>
+
     <div class="body">
-      <section id="active" hidden>
-        <p class="recording"><span class="dot"></span> Recording</p>
-        <p id="active-title">—</p>
-        <p class="hint" id="active-elapsed">—</p>
-        <button id="stop" class="danger">Stop notetaker</button>
+      <div class="seg" role="tablist" aria-label="Saar">
+        <button id="tab-now" type="button" role="tab" aria-selected="true" aria-controls="pane-now">
+          Now
+        </button>
+        <button
+          id="tab-setup"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="pane-setup"
+        >
+          Setup
+        </button>
+      </div>
+
+      <!-- ── Now ─────────────────────────────────────────────── -->
+      <section id="pane-now" class="pane" role="tabpanel" aria-labelledby="tab-now">
+        <div id="activity"></div>
+        <button id="open" class="ghost">Open meetings</button>
       </section>
-      <p id="status">Loading…</p>
-      <label for="account">Notetaker account index</label>
-      <input id="account" type="number" min="0" step="1" placeholder="e.g. 1" />
-      <p class="hint">
-        The Google account Saar joins as. Sign it into this Chrome profile, then use its
-        <code>authuser</code> index.
-      </p>
-      <button id="open">Open meetings</button>
+
+      <!-- ── Setup ───────────────────────────────────────────── -->
+      <section id="pane-setup" class="pane" role="tabpanel" aria-labelledby="tab-setup" hidden>
+        <p id="status" class="hint">Loading…</p>
+
+        <label for="account">Notetaker account</label>
+        <select id="account">
+          <option value="">Loading accounts…</option>
+        </select>
+        <p class="hint">
+          The Google account Saar joins your meetings as.
+          <a href="#" id="account-refresh">Refresh</a>
+        </p>
+
+        <hr />
+
+        <label class="toggle" for="mom-enabled">
+          <input id="mom-enabled" type="checkbox" />
+          <span>Summarise with AI</span>
+        </label>
+        <p class="hint">Turns the transcript into a summary, decisions and action items.</p>
+
+        <div id="mom-config" hidden>
+          <label for="llm-url">Endpoint</label>
+          <input id="llm-url" type="url" spellcheck="false" placeholder="http://localhost:11434/v1" />
+
+          <label for="llm-key">API key</label>
+          <input id="llm-key" type="password" spellcheck="false" placeholder="ollama" />
+
+          <label for="llm-model">Model</label>
+          <select id="llm-model">
+            <option value="">Connect to load models…</option>
+          </select>
+
+          <p class="hint">
+            Prefilled for a local Ollama, which keeps everything on this machine. Change it for
+            OpenAI or any OpenAI-compatible provider.
+          </p>
+          <button id="llm-test" class="secondary">Test connection</button>
+          <p id="llm-result" class="hint"></p>
+        </div>
+      </section>
     </div>
     <script type="module" src="./main.ts"></script>
   </body>

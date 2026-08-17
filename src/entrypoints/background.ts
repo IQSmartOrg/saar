@@ -1,6 +1,11 @@
 import { ChromeTabBot } from '@/adapters/bot/ChromeTabBot';
 import { IndexedDbTranscriptRepository } from '@/adapters/storage/IndexedDbTranscriptRepository';
 import { ChromeSettingsStore } from '@/adapters/storage/ChromeSettingsStore';
+import { JobStore } from '@/processing/JobStore';
+import { OpenAiCompatibleClient } from '@/processing/OpenAiCompatibleClient';
+import { MomRunner, MOM_ALARM } from '@/processing/runner';
+import { progressOf } from '@/processing/MomBuilder';
+import { deriveStatus, isJobRunning } from '@/processing/status';
 import { SessionRegistry, type ActiveSession } from '@/core/session/sessionState';
 import { newSessionId } from '@/core/types/session';
 import {
@@ -13,7 +18,8 @@ import {
 import {
   PORT_NAME,
   assertNever,
-  type ActiveSessionSummary,
+  type Activity,
+  type LlmProbeResult,
   type Message,
 } from '@/shared/messaging/messages';
 
@@ -25,7 +31,100 @@ export default defineBackground(() => {
   // Composition root: the only place concrete adapters are constructed.
   const repo = new IndexedDbTranscriptRepository();
   const settings = new ChromeSettingsStore();
+  const jobs = new JobStore();
   const bots = new Map<string, ChromeTabBot>();
+
+  function broadcast(msg: Message): void {
+    // No receiver is the normal case — the popup is usually shut.
+    void chrome.runtime.sendMessage(msg).catch(() => undefined);
+  }
+
+  const mom = new MomRunner({
+    repo,
+    settings,
+    jobs,
+    notify: (title, message) => notify(title, message),
+    onProgress: (sessionId, progress) =>
+      broadcast({ type: 'MOM_PROGRESS', sessionId, progress }),
+  });
+
+  /** How long a finished or failed meeting stays on the Now list. */
+  const RECENT_MS = 10 * 60_000;
+
+  /**
+   * Everything Saar is doing, newest first.
+   *
+   * Recording comes first because it is the only row that is time-critical —
+   * Stop is pressed under pressure, so it must not move down the list as
+   * finished meetings pile up behind it.
+   */
+  async function buildActivity(): Promise<Activity[]> {
+    const out: Activity[] = [];
+    const reg = await loadRegistry();
+
+    for (const entry of reg.all()) {
+      const session = await repo.getSession(entry.sessionId);
+      const segments = await repo.getSegments(entry.sessionId);
+      out.push({
+        kind: 'recording',
+        sessionId: entry.sessionId,
+        title: session?.title ?? entry.meetingCode,
+        startedAt: session?.startedAt ?? 0,
+        lines: segments.filter((x) => x.final).length,
+      });
+    }
+
+    for (const job of await jobs.all()) {
+      if (!isJobRunning(job.phase)) continue;
+      const session = await repo.getSession(job.sessionId);
+      out.push({
+        kind: 'processing',
+        sessionId: job.sessionId,
+        title: session?.title ?? session?.meetingCode ?? 'Meeting',
+        progress: progressOf(job),
+      });
+    }
+
+    // Recently settled meetings, so a completed run is never something the user
+    // only learns about from a notification they missed.
+    const cutoff = Date.now() - RECENT_MS;
+    const minutesIds = new Set(await repo.listMinutesIds());
+    const phases = new Map((await jobs.all()).map((j) => [j.sessionId, j.phase]));
+
+    for (const session of await repo.listSessions()) {
+      const settledAt = session.endedAt ?? session.startedAt;
+      if (settledAt < cutoff) continue;
+      if (out.some((a) => a.sessionId === session.id)) continue;
+
+      // Same derivation the meetings page uses, so the two never disagree.
+      const status = deriveStatus({
+        status: session.status,
+        jobPhase: phases.get(session.id),
+        hasMinutes: minutesIds.has(session.id),
+      });
+      const title = session.title ?? session.meetingCode;
+
+      if (status === 'ready') {
+        const minutes = await repo.getMinutes(session.id);
+        out.push({
+          kind: 'ready',
+          sessionId: session.id,
+          title,
+          decisions: minutes?.decisions.length ?? 0,
+          actionItems: minutes?.actionItems.length ?? 0,
+        });
+      } else if (status === 'failed') {
+        out.push({
+          kind: 'failed',
+          sessionId: session.id,
+          title,
+          error: session.error ?? 'something went wrong',
+        });
+      }
+    }
+
+    return out;
+  }
 
   async function loadRegistry(): Promise<SessionRegistry> {
     const raw = await chrome.storage.session.get(STATE_KEY);
@@ -201,25 +300,54 @@ export default defineBackground(() => {
       captured > 0 ? 'Transcript saved' : 'Meeting ended — nothing captured',
       captured > 0 ? `${label} · ${captured} lines${why}` : `${label}${why}`,
     );
+
+    if (captured > 0) await mom.queue(sessionId);
   }
 
   chrome.runtime.onMessage.addListener((msg: Message, sender, sendResponse) => {
-    if (msg.type === 'ACTIVE_SESSIONS_QUERY') {
+    if (msg.type === 'ACTIVITY_QUERY') {
+      void (async () => sendResponse(await buildActivity()))();
+      return true;
+    }
+
+    if (msg.type === 'RETRY_REQUESTED') {
+      void (async () => sendResponse(await mom.retry(msg.sessionId)))();
+      return true;
+    }
+
+    if (msg.type === 'LLM_PROBE') {
       void (async () => {
-        const reg = await loadRegistry();
-        const rows: ActiveSessionSummary[] = [];
-        for (const s of reg.all()) {
-          const stored = await repo.getSession(s.sessionId);
-          rows.push({
-            sessionId: s.sessionId,
-            meetingCode: s.meetingCode,
-            title: stored?.title ?? null,
-            startedAt: stored?.startedAt ?? 0,
-          });
+        const cfg = await settings.get();
+        const client = new OpenAiCompatibleClient({
+          baseUrl: cfg.llmBaseUrl,
+          apiKey: cfg.llmApiKey,
+          model: cfg.llmModel,
+        });
+        // health() first: a GET succeeds even when the POST that writes the
+        // minutes would be refused, so the connection test has to ask the
+        // question the summariser will actually face.
+        const health = await client.health();
+        if (!health.ok) {
+          sendResponse({
+            ok: false,
+            models: [],
+            detail: health.detail,
+            ...(health.originBlocked === true ? { originBlocked: true } : {}),
+          } satisfies LlmProbeResult);
+          return;
         }
-        sendResponse(rows);
+        try {
+          const models = await client.listModels();
+          sendResponse({ ok: true, models: models.map((m) => m.id) } satisfies LlmProbeResult);
+        } catch (e) {
+          sendResponse({
+            ok: false,
+            models: [],
+            detail: e instanceof Error ? e.message : String(e),
+          } satisfies LlmProbeResult);
+        }
       })();
-      return true; // async response
+      return true;
     }
 
     void (async () => {
@@ -253,6 +381,7 @@ export default defineBackground(() => {
           await withWatch(msg.sessionId, (w) => w.signal('manual-stop'));
           break;
 
+
         case 'JOIN_CANCELLED':
           break;
         case 'BOT_STATE':
@@ -260,6 +389,8 @@ export default defineBackground(() => {
         case 'SOURCE_HEALTH':
         case 'BOT_PRESENCE':
           break; // these arrive over the port, not sendMessage
+        case 'MOM_PROGRESS':
+          break; // broadcast outward only
         default:
           assertNever(msg);
       }
@@ -338,6 +469,10 @@ export default defineBackground(() => {
    * needed. Alarms survive termination and wake the worker to run this.
    */
   chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === MOM_ALARM) {
+      void mom.step();
+      return;
+    }
     if (alarm.name !== WATCHDOG_ALARM) return;
     void (async () => {
       const watches = await loadWatches();
@@ -357,8 +492,9 @@ export default defineBackground(() => {
     })();
   });
 
-  // The worker may be revived after a restart with sessions still in flight.
+  // The worker may be revived after a restart with work still in flight.
   void (async () => {
+    await mom.resume();
     const watches = await loadWatches();
     if (watches.size > 0) {
       await chrome.alarms.create(WATCHDOG_ALARM, {

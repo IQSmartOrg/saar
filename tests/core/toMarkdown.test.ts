@@ -1,5 +1,11 @@
 import { describe, it, expect } from 'vitest';
-import { transcriptToMarkdown, formatTimestamp } from '@/core/export/toMarkdown';
+import {
+  transcriptToMarkdown,
+  formatTimestamp,
+  minutesToMarkdown,
+  meetingToMarkdown,
+} from '@/core/export/toMarkdown';
+import { EMPTY_MINUTES, type MeetingMinutes } from '@/core/types/minutes';
 import type { MeetingSession } from '@/core/types/session';
 import type { TranscriptSegment } from '@/core/types/transcript';
 
@@ -70,5 +76,73 @@ describe('transcriptToMarkdown', () => {
 
   it('states plainly when there is no transcript', () => {
     expect(transcriptToMarkdown(session, [])).toContain('_No transcript captured._');
+  });
+});
+
+describe('minutesToMarkdown', () => {
+  const full: MeetingMinutes = {
+    summary: 'We shipped.',
+    topics: [{ title: 'Release', points: ['QA green'], speakers: ['Ana'] }],
+    decisions: [{ decision: 'Ship Friday', context: 'QA is green' }],
+    actionItems: [
+      { owner: 'Ana Roy', task: 'Cut the build', due: 'Thursday', quote: 'I will cut it.' },
+    ],
+    openQuestions: ['Tell support when?'],
+  };
+
+  it('writes every section', () => {
+    const md = minutesToMarkdown(full);
+    expect(md).toContain('## Summary');
+    expect(md).toContain('### Release');
+    expect(md).toContain('- **Ship Friday** — QA is green');
+    expect(md).toContain('- **Ana Roy** — Cut the build _(by Thursday)_');
+    expect(md).toContain('## Open questions');
+  });
+
+  it('keeps the quote, since that is what makes a claim checkable', () => {
+    expect(minutesToMarkdown(full)).toContain('> I will cut it.');
+  });
+
+  it('skips empty sections rather than writing bare headings', () => {
+    const md = minutesToMarkdown({ ...EMPTY_MINUTES, summary: 'Only this.' });
+    expect(md).toContain('## Summary');
+    expect(md).not.toContain('## Decisions');
+  });
+
+  it('falls back to raw text when the model output could not be parsed', () => {
+    const md = minutesToMarkdown({ ...EMPTY_MINUTES, raw: 'Unstructured reply.' });
+    expect(md).toContain('Unstructured reply.');
+  });
+});
+
+describe('meetingToMarkdown', () => {
+  const session: MeetingSession = {
+    id: 's1',
+    platform: 'google-meet',
+    meetingCode: 'abc-defg-hij',
+    title: 'Weekly sync',
+    startedAt: 0,
+    endedAt: 600_000,
+    participants: [],
+    status: 'complete',
+  };
+  const segments: TranscriptSegment[] = [
+    { id: 'a', final: true, speaker: 'Ana', text: 'Hello there.', tStart: 0, tEnd: 2, source: 'meet-captions' },
+  ];
+
+  it('puts the minutes above the transcript they came from', () => {
+    const md = meetingToMarkdown(session, segments, { ...EMPTY_MINUTES, summary: 'We met.' });
+    expect(md.indexOf('## Summary')).toBeLessThan(md.indexOf('## Transcript'));
+  });
+
+  it('always includes the transcript — minutes alone lose the evidence', () => {
+    const md = meetingToMarkdown(session, segments, { ...EMPTY_MINUTES, summary: 'We met.' });
+    expect(md).toContain('Hello there.');
+  });
+
+  it('is just the transcript when there are no minutes', () => {
+    const md = meetingToMarkdown(session, segments, null);
+    expect(md).toContain('## Transcript');
+    expect(md).not.toContain('## Summary');
   });
 });

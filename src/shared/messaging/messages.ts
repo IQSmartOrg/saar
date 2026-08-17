@@ -2,13 +2,55 @@ import type { SourceHealth } from '@/core/ports/TranscriptSource';
 import type { SessionStatus } from '@/core/types/session';
 import type { TranscriptSegment } from '@/core/types/transcript';
 import type { ImmediateStopReason } from '@/core/session/stopSignals';
+import type { MomProgress } from '@/processing/types';
 
-/** What the popup needs to render the Stop button. */
-export interface ActiveSessionSummary {
-  readonly sessionId: string;
-  readonly meetingCode: string;
-  readonly title: string | null;
-  readonly startedAt: number;
+/**
+ * One row of "what Saar is doing right now".
+ *
+ * A single list rather than separate recording and processing queries, because
+ * summarising begins when a meeting ENDS and therefore outlives it: a user can
+ * be recording their 3pm while the 2pm is still being written up. Anything that
+ * modelled one active thing could not express that.
+ */
+export type Activity =
+  | {
+      readonly kind: 'recording';
+      readonly sessionId: string;
+      readonly title: string;
+      readonly startedAt: number;
+      readonly lines: number;
+    }
+  | {
+      readonly kind: 'processing';
+      readonly sessionId: string;
+      readonly title: string;
+      readonly progress: MomProgress;
+    }
+  | {
+      readonly kind: 'ready';
+      readonly sessionId: string;
+      readonly title: string;
+      readonly decisions: number;
+      readonly actionItems: number;
+    }
+  | {
+      readonly kind: 'failed';
+      readonly sessionId: string;
+      readonly title: string;
+      readonly error: string;
+    };
+
+/**
+ * Reachability and the available models in one round trip — the settings panel
+ * always wants both: it cannot offer a model dropdown without the list, and a
+ * list it could not fetch is exactly what "not connected" means.
+ */
+export interface LlmProbeResult {
+  readonly ok: boolean;
+  readonly models: readonly string[];
+  readonly detail?: string;
+  /** A local model rejected this extension's origin; there is a one-line fix. */
+  readonly originBlocked?: boolean;
 }
 
 export const PORT_NAME = 'saar-bot';
@@ -26,8 +68,14 @@ export type Message =
   | { type: 'BOT_PRESENCE'; sessionId: string; inCall: boolean }
   /** Signal 8: Stop pressed in the popup. */
   | { type: 'STOP_REQUESTED'; sessionId: string }
-  /** Popup asks what is currently recording. */
-  | { type: 'ACTIVE_SESSIONS_QUERY' };
+  /** Popup asks what Saar is doing right now — recording, summarising, or done. */
+  | { type: 'ACTIVITY_QUERY' }
+  /** Re-run summarisation for a meeting whose transcript is already saved. */
+  | { type: 'RETRY_REQUESTED'; sessionId: string }
+  /** Summarisation advanced a step. Broadcast; usually nobody is listening. */
+  | { type: 'MOM_PROGRESS'; sessionId: string; progress: MomProgress }
+  /** Test the configured endpoint and fetch its model list, for the dropdown. */
+  | { type: 'LLM_PROBE' };
 
 /** Makes every unhandled message variant a compile-time error. */
 export function assertNever(x: never): never {
