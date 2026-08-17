@@ -169,6 +169,12 @@ header {
   background: color-mix(in srgb, currentColor 12%, transparent);
   opacity: 0.7;
 }
+/* Paused: deliberately colourless. Nothing is happening, and a warm chip beside
+   a stalled progress bar reads as activity. */
+.chip.hold {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  opacity: 0.8;
+}
 
 @media (prefers-color-scheme: dark) {
   .chip.live,

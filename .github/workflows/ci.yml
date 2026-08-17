@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  # Every PR that targets main. Named explicitly rather than left bare: a bare
+  # `pull_request:` fires for PRs into any branch, including the release
+  # branches this repo generates.
+  pull_request:
+    branches: [main]
+  # Lets a red build be re-run without an empty commit.
+  workflow_dispatch:
+
+# A second push to the same branch makes the first run irrelevant. `main` is
+# excluded so the run that produced a given commit on main always completes.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          # dependency-cruiser follows the Node release cycle and refuses to run
+          # on anything older; package.json `engines` says the same.
+          node-version: 22
+          cache: npm
+
+      # `npm ci` respects the lockfile exactly, which `npm install` does not.
+      - run: npm ci
+
+      # Generates .wxt/tsconfig.json and the auto-import types. `postinstall`
+      # already does this, but npm can be configured to skip install scripts and
+      # the failure that causes — "cannot find module .wxt/tsconfig.json" from
+      # tsc — points nowhere near the cause. Idempotent, so running it twice is
+      # free insurance.
+      - name: Generate WXT types
+        run: npx wxt prepare
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Architecture boundaries
+        run: npm run deps
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build
+
+      # Proof the artefact is loadable, not just that the build exited 0.
+      - name: Verify the built extension
+        run: |
+          test -f dist/chrome-mv3/manifest.json
+          test -f dist/chrome-mv3/background.js
+          test -f dist/chrome-mv3/popup.html
+          test -f dist/chrome-mv3/meetings.html
+          test -f dist/chrome-mv3/content-scripts/bot-agent.js
+          test -f dist/chrome-mv3/content-scripts/meet-detector.js
+
+      # Downloadable from the run, so a PR can be tried in a browser without
+      # building it locally. Not a release — see release.yml for that.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: saar-unpacked-${{ github.sha }}
+          path: dist/chrome-mv3
+          retention-days: 14

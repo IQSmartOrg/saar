@@ -1,0 +1,182 @@
+name: Release
+
+# Manual only. A release moves the version people install, so it is a decision
+# someone makes, never something a push triggers.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release, e.g. 0.2.0 (digits and dots, no leading v)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as a pre-release — shown as such, and not as "Latest"'
+        type: boolean
+        default: false
+
+permissions:
+  # Pushing the release branch and creating the release. Nothing else.
+  contents: write
+
+# Two releases at once would race over tags and branch names. Queued rather than
+# cancelled: a half-finished release that pushed a branch but published nothing
+# is worse than waiting.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Validate the version and name the release branch
+        id: plan
+        env:
+          # Through the environment, never interpolated into the script body —
+          # `${{ inputs.version }}` inline is a shell-injection hole.
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          if ! printf '%s' "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::version must be major.minor.patch — got '$VERSION'."
+            echo "::error::Chrome manifests take digits and dots only, so '1.0.0-beta' cannot ship."
+            exit 1
+          fi
+
+          tag="v$VERSION"
+          # Checked before building rather than after: action-gh-release would
+          # otherwise reuse the existing tag and quietly publish the old commit.
+          if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+            echo "::error::tag $tag already exists. Pick a new version."
+            exit 1
+          fi
+
+          # Versions must climb. The repo's committed version is deliberately
+          # NOT kept in step with releases — the workflow writes it and never
+          # reads it — so the tags are the only record of what has shipped, and
+          # this is the check that record buys us. It matters because Chrome
+          # ignores an update whose version is not higher than the installed
+          # one: releasing 0.1.5 after 0.2.0 leaves everybody stuck, silently.
+          #
+          # `sort -V` and not `sort`: lexically, 0.10.0 sorts below 0.9.0.
+          latest="$(git ls-remote --tags --refs origin 'v*' \
+            | awk -F/ '{print $NF}' \
+            | sort -V \
+            | tail -1)"
+
+          if [ -n "$latest" ]; then
+            highest="$(printf '%s\n%s\n' "${latest#v}" "$VERSION" | sort -V | tail -1)"
+            if [ "$highest" != "$VERSION" ]; then
+              echo "::error::$tag is not newer than the last release, $latest."
+              exit 1
+            fi
+            echo "Last release was $latest"
+          else
+            echo "No previous release — this is the first."
+          fi
+
+          # Date for a human scanning the branch list, epoch seconds so two
+          # releases on the same day cannot collide, sha so the branch records
+          # which commit it was cut from.
+          sha="$(git rev-parse --short HEAD)"
+          branch="release-$(date -u +%Y-%m-%d)-$(date -u +%s)-$sha"
+
+          {
+            echo "tag=$tag"
+            echo "branch=$branch"
+            echo "sha=$sha"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Releasing $tag from $sha on branch $branch"
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      # See ci.yml — `npm run check` typechecks, which needs these generated.
+      - name: Generate WXT types
+        run: npx wxt prepare
+
+      - name: Set the version
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node scripts/set-version.mjs "$VERSION"
+
+      # A release that fails to load is worse than no release, so it goes out
+      # only if the same gate CI uses passes — run after the bump, since the
+      # bump is part of what ships.
+      - name: Check
+        run: npm run check
+
+      - name: Build and zip
+        run: npm run zip
+
+      - name: Locate the zip and confirm the manifest version
+        id: artifact
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          zip="$(ls dist/*-chrome.zip)"
+
+          # Proof the bump reached the built output, not just the source files.
+          built="$(node -p "require('./dist/chrome-mv3/manifest.json').version")"
+          if [ "$built" != "$VERSION" ]; then
+            echo "::error::built manifest says $built but the release is $VERSION."
+            exit 1
+          fi
+
+          echo "zip=$zip" >> "$GITHUB_OUTPUT"
+          echo "Built $zip at manifest version $built"
+
+      # Pushed only now: there is no point publishing a branch for a build that
+      # did not pass.
+      - name: Push the release branch
+        env:
+          BRANCH: ${{ steps.plan.outputs.branch }}
+          TAG: ${{ steps.plan.outputs.tag }}
+        run: |
+          set -euo pipefail
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+
+          git checkout -b "$BRANCH"
+          git add package.json package-lock.json wxt.config.ts
+          git commit -m "release: $TAG"
+          git push origin "$BRANCH"
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.plan.outputs.tag }}
+          # Tagged on the release branch, so the released commit is the one
+          # carrying the version bump — not the main commit before it.
+          target_commitish: ${{ steps.plan.outputs.branch }}
+          name: Saar ${{ steps.plan.outputs.tag }}
+          files: ${{ steps.artifact.outputs.zip }}
+          prerelease: ${{ inputs.prerelease }}
+          generate_release_notes: true
+          # Chrome cannot install a .zip directly, so the download is useless
+          # without the three lines below it.
+          body: |
+            ## Install
+
+            1. Download the `.zip` below and unzip it.
+            2. Open `chrome://extensions` and turn on **Developer mode** (top right).
+            3. Click **Load unpacked** and choose the unzipped folder.
+
+            Saar joins your Meet calls as a second Google account and keeps the
+            transcript locally. Pick that account in the Saar popup before your
+            first meeting.
+
+            Cut from `${{ steps.plan.outputs.sha }}` on branch
+            `${{ steps.plan.outputs.branch }}`.

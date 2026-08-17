@@ -30,14 +30,16 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/adapters/meet/**/*.ts'],
+    // The Meet automation must run unchanged under Puppeteer for the cloud
+    // build, so it may not touch any extension API. `src/agents` is where the
+    // chrome-shaped wiring around it lives instead.
+    files: ['src/meet/**/*.ts', 'src/utils/**/*.ts'],
     rules: {
       'no-restricted-globals': [
         'error',
         {
           name: 'chrome',
-          message:
-            'adapters/meet must stay chrome-free so it ports to Puppeteer. See spec §5.',
+          message: 'src/meet and src/utils must stay chrome-free. Put the wiring in src/agents.',
         },
       ],
     },
@@ -47,25 +49,16 @@ export default tseslint.config(
     // schedule it. Keeping the rest chrome-free is what lets the chunker, the
     // prompts and the map-reduce engine be tested without a browser.
     files: ['src/processing/**/*.ts'],
-    ignores: ['src/processing/JobStore.ts', 'src/processing/runner.ts'],
+    ignores: ['src/processing/job/*.ts'],
     rules: {
       'no-restricted-globals': [
         'error',
         {
           name: 'chrome',
           message:
-            'Only JobStore.ts and runner.ts may touch chrome.* — the rest of src/processing must stay testable without a browser.',
+            'Only src/processing/job may touch chrome.* — the rest of src/processing must stay testable without a browser.',
         },
       ],
-    },
-  },
-  {
-    // The one deliberate exception: openTab.ts owns the chrome.tabs plumbing so
-    // that every other file in adapters/meet can stay chrome-free. Must come
-    // after the block above — in flat config, later entries win.
-    files: ['src/adapters/meet/openTab.ts'],
-    rules: {
-      'no-restricted-globals': 'off',
     },
   },
 );

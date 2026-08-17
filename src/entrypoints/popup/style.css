@@ -245,6 +245,9 @@ button.secondary {
 .chip.work { background: rgba(216, 166, 87, 0.18); color: #d8a657; }
 .chip.ready { background: rgba(79, 191, 155, 0.18); color: #4fbf9b; }
 .chip.bad { background: rgba(229, 72, 77, 0.18); color: #ff9b9e; }
+/* Paused: deliberately colourless. Nothing is happening, and a warm chip beside
+   a stalled progress bar reads as activity. */
+.chip.hold { background: rgba(255, 255, 255, 0.1); color: inherit; opacity: 0.75; }
 
 .dot {
   width: 7px;
