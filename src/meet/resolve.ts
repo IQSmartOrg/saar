@@ -46,9 +46,20 @@ export function iconNames(el: Element): string[] {
     .filter((t) => t !== '' && /^[a-z0-9_]+$/.test(t));
 }
 
-function clickable(doc: Document): HTMLElement[] {
+/**
+ * @param includeDisabled keep controls that cannot be clicked.
+ *
+ * Clicking and reading are different needs, and conflating them was a bug: a
+ * disabled mic button still carries `data-is-muted`, so it answers "is the mic
+ * off?" perfectly well even though it cannot be pressed. Filtering it out meant
+ * the safety gate could never confirm a mute it was looking straight at, and
+ * the bot silently declined to join.
+ */
+function candidates(doc: Document, includeDisabled: boolean): HTMLElement[] {
   const all = Array.from(doc.querySelectorAll<HTMLElement>('button, [role="button"]')).filter(
-    (el) => !el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true',
+    (el) =>
+      includeDisabled ||
+      (!el.hasAttribute('disabled') && el.getAttribute('aria-disabled') !== 'true'),
   );
   // Innermost only. Meet nests controls inside wrapper divs whose textContent
   // includes the inner label, so a naive match lands on a wrapper and the click
@@ -56,8 +67,17 @@ function clickable(doc: Document): HTMLElement[] {
   return all.filter((el) => !all.some((other) => other !== el && el.contains(other)));
 }
 
-export function resolveControl(doc: Document, spec: ControlSpec): Resolved | null {
-  const candidates = clickable(doc);
+export interface ResolveOptions {
+  /** Include controls that are disabled. For reading state, never for clicking. */
+  readonly includeDisabled?: boolean;
+}
+
+export function resolveControl(
+  doc: Document,
+  spec: ControlSpec,
+  opts: ResolveOptions = {},
+): Resolved | null {
+  const candidates_ = candidates(doc, opts.includeDisabled === true);
 
   for (const strategy of STRATEGY_ORDER) {
     let el: HTMLElement | undefined;
@@ -65,14 +85,14 @@ export function resolveControl(doc: Document, spec: ControlSpec): Resolved | nul
     switch (strategy) {
       case 'jsname':
         for (const name of spec.jsname ?? []) {
-          el = candidates.find((c) => c.getAttribute('jsname') === name);
+          el = candidates_.find((c) => c.getAttribute('jsname') === name);
           if (el) break;
         }
         break;
 
       case 'icon':
         for (const name of spec.icon ?? []) {
-          el = candidates.find((c) => iconNames(c).includes(name));
+          el = candidates_.find((c) => iconNames(c).includes(name));
           if (el) break;
         }
         break;
@@ -80,15 +100,15 @@ export function resolveControl(doc: Document, spec: ControlSpec): Resolved | nul
       case 'aria':
         if (spec.aria) {
           const re = spec.aria;
-          el = candidates.find((c) => re.test(c.getAttribute('aria-label') ?? ''));
+          el = candidates_.find((c) => re.test(c.getAttribute('aria-label') ?? ''));
         }
         break;
 
       case 'text':
         for (const wanted of spec.text ?? []) {
           el =
-            candidates.find((c) => visibleLabel(c) === wanted) ??
-            candidates.find((c) => visibleLabel(c).startsWith(wanted));
+            candidates_.find((c) => visibleLabel(c) === wanted) ??
+            candidates_.find((c) => visibleLabel(c).startsWith(wanted));
           if (el) break;
         }
         break;

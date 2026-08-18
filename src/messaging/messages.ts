@@ -75,6 +75,20 @@ export type Message =
   | { type: 'USER_ALIVE'; meetingCode: string }
   /** Signal 7: the bot reporting whether it is still inside the call. */
   | { type: 'BOT_PRESENCE'; sessionId: string; inCall: boolean }
+  /**
+   * What the bot can see while it is trying to get in.
+   *
+   * Logged by the worker, not the bot tab: reading the bot tab's own console
+   * means focusing it, and focusing it is what makes Chrome prioritise its
+   * rendering — so the act of observing changes the thing being observed.
+   */
+  | {
+      type: 'BOT_DIAG';
+      sessionId: string;
+      visibility: string;
+      controls: string;
+      mute: string;
+    }
   /** Signal 8: Stop pressed in the popup. */
   | { type: 'STOP_REQUESTED'; sessionId: string }
   /** Popup asks what Saar is doing right now — recording, summarising, or done. */
