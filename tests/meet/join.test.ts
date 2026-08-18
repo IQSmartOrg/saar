@@ -123,7 +123,7 @@ describe('MeetJoin — clicking join', () => {
       origin ??= (e.target as HTMLElement).id || 'wrapper';
     });
 
-    expect(await new MeetJoin(document).clickJoin()).toBe(true);
+    expect((await new MeetJoin(document).clickJoin()).clicked).toBe(true);
     expect(origin).toBe('realJoin');
   });
 
@@ -139,14 +139,36 @@ describe('MeetJoin — clicking join', () => {
     expect(hits).toEqual(['real']);
   });
 
-  it('reports false and falls back to Enter when no join button matches', async () => {
+  it('reports not-clicked, and clicks nothing, when no join button matches', async () => {
     document.body.innerHTML = control({ id: 'x', label: 'अभी शामिल हों' });
+    let clicks = 0;
+    document.querySelector('#x')!.addEventListener('click', () => clicks++);
+
+    const result = await new MeetJoin(document).clickJoin();
+    expect(result.clicked).toBe(false);
+    expect(clicks).toBe(0); // never guess at which button is Join
+  });
+
+  it('pressEnter is the separate language fallback', () => {
+    document.body.innerHTML = '';
     let enter = false;
     document.addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Enter') enter = true;
     });
-    expect(await new MeetJoin(document).clickJoin()).toBe(false);
+    new MeetJoin(document).pressEnter();
     expect(enter).toBe(true);
+  });
+
+  it('flags that admission is needed when the button says "Ask to join"', async () => {
+    document.body.innerHTML = control({ id: 'j', label: 'Ask to join' });
+    const result = await new MeetJoin(document).clickJoin();
+    expect(result.clicked).toBe(true);
+    expect(result.needsAdmission).toBe(true);
+  });
+
+  it('does not flag admission for a plain "Join now"', async () => {
+    document.body.innerHTML = control({ id: 'j', label: 'Join now' });
+    expect((await new MeetJoin(document).clickJoin()).needsAdmission).toBe(false);
   });
 });
 
@@ -382,7 +404,7 @@ describe('joinMeeting driver', () => {
     expect(out.ok).toBe(false);
     expect(out.wasInLobby).toBe(true);
     expect(lobbyCalls).toBe(1);
-    expect(out.error).toMatch(/not admitted from the lobby/);
+    expect(out.error).toMatch(/did not admit/);
   });
 
   it('never clicks join while sitting in the lobby', async () => {
@@ -425,5 +447,115 @@ describe('joinMeeting driver', () => {
       },
     });
     expect(out.ok).toBe(true);
+  });
+});
+
+/**
+ * "Ask to join" meetings.
+ *
+ * The reported bug: joining worked where the button said "Join now" and failed
+ * where it said "Ask to join". The difference is that the second one puts you
+ * in a queue, and the old loop kept clicking throughout it — every click
+ * withdrew and re-issued the knock, so the host's prompt kept disappearing.
+ */
+describe('joinMeeting — meetings that require admission', () => {
+  function fakeTime() {
+    let t = 0;
+    return { now: () => t, sleep: (ms: number) => { t += ms; return Promise.resolve(); } };
+  }
+
+  /** A pre-join screen with the mic and camera already off. */
+  const OFF_CONTROLS =
+    `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true"></button>` +
+    `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true"></button>`;
+
+  it('clicks "Ask to join" exactly once while waiting to be admitted', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    let clicks = 0;
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      clicks++;
+      // Meet swaps the button for its waiting screen — whose markup we do not
+      // match, which is exactly the condition that used to cause re-clicking.
+      document.body.innerHTML = OFF_CONTROLS + '<div>Waiting for someone to let you in</div>';
+    });
+
+    const out = await joinMeeting(document, { ...fakeTime(), timeoutMs: 60_000, pollMs: 1000 });
+
+    expect(clicks).toBe(1);
+    expect(out.ok).toBe(false); // never admitted, in this test
+    expect(out.needsAdmission).toBe(true);
+  });
+
+  it('reports the lobby immediately, on the button label alone', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      document.body.innerHTML = OFF_CONTROLS;
+    });
+
+    const seen: number[] = [];
+    const clock = fakeTime();
+    await joinMeeting(document, {
+      ...clock,
+      timeoutMs: 20_000,
+      pollMs: 1000,
+      onLobby: () => seen.push(clock.now()),
+    });
+
+    // Once, and on the pass that clicked — not after some later inference.
+    expect(seen).toEqual([0]);
+  });
+
+  it('succeeds when the host admits us part-way through the wait', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      document.body.innerHTML = OFF_CONTROLS + '<div>Asking to be let in</div>';
+      // The host lets us in a few polls later.
+      setTimeout(() => {}, 0);
+    });
+
+    const clock = fakeTime();
+    let admitted = false;
+    const out = await joinMeeting(document, {
+      ...clock,
+      timeoutMs: 60_000,
+      pollMs: 1000,
+      sleep: (ms: number) => {
+        clock.sleep(ms);
+        if (!admitted && clock.now() >= 5000) {
+          admitted = true;
+          document.body.innerHTML = control({ jsname: 'CQylAd', aria: 'Leave call' });
+        }
+        return Promise.resolve();
+      },
+    });
+
+    expect(out.ok).toBe(true);
+    expect(out.wasInLobby).toBe(true);
+  });
+
+  it('retries a click that did not take, but slowly', async () => {
+    // The button staying put means the click did not land. Worth retrying —
+    // just not ninety times.
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    let clicks = 0;
+    document.querySelector('#ask')!.addEventListener('click', () => clicks++);
+
+    await joinMeeting(document, { ...fakeTime(), timeoutMs: 60_000, pollMs: 1000 });
+
+    // 60s at one retry per 10s, not 60 at one per poll.
+    expect(clicks).toBeGreaterThan(1);
+    expect(clicks).toBeLessThanOrEqual(7);
+  });
+
+  it('never presses Enter more than once when no button is recognised', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'x', label: 'अभी शामिल हों' });
+    let enters = 0;
+    document.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') enters++;
+    });
+
+    await joinMeeting(document, { ...fakeTime(), timeoutMs: 60_000, pollMs: 1000 });
+
+    expect(enters).toBe(1);
   });
 });

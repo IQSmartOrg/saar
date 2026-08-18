@@ -1,5 +1,5 @@
 import { LOBBY_INDICATOR, MEET_CONTROLS, type MeetControls } from '@/meet/controls';
-import { resolveControl, type MatchStrategy } from '@/meet/resolve';
+import { resolveControl, visibleLabel, type MatchStrategy } from '@/meet/resolve';
 import { sleep as realSleep, type Sleep } from '@/utils/sleep';
 
 /**
@@ -13,6 +13,23 @@ export interface ControlReport {
   readonly control: string;
   readonly matchedBy: MatchStrategy | 'none';
 }
+
+export interface JoinClick {
+  readonly clicked: boolean;
+  /** Lowercased label of the button that was clicked, for the log. */
+  readonly label: string;
+  /**
+   * The button asked for admission rather than joining outright.
+   *
+   * "Ask to join" is Meet telling us up front that a host has to let us in and
+   * may take minutes about it. Worth knowing at the moment of the click rather
+   * than inferring it afterwards from a waiting screen we cannot reliably see.
+   */
+  readonly needsAdmission: boolean;
+}
+
+/** "ask to join", "ask to be let in" — admission required, in the label. */
+const ASKS_FOR_ADMISSION = /\bask\b/;
 
 /**
  * Drives Meet's pre-join controls via DOM interaction only.
@@ -87,21 +104,46 @@ export class MeetJoin {
     return true;
   }
 
-  async clickJoin(): Promise<boolean> {
-    const btn = this.find('join');
-    if (btn) {
-      btn.click();
-      return true;
-    }
+  /**
+   * The join button, if it is on the page right now.
+   *
+   * Public because its ABSENCE is load-bearing: once we have clicked it and it
+   * is gone while we are still not in the call, we are waiting to be admitted.
+   * That inference needs no selector, which matters because the waiting
+   * screen's markup is the one thing here nobody has verified.
+   */
+  findJoin(): { el: HTMLElement; label: string } | null {
+    const el = this.find('join');
+    if (el === null) return null;
+    const label = (visibleLabel(el) || el.getAttribute('aria-label') || '').toLowerCase();
+    return { el, label };
+  }
 
-    // Nothing matched — the label is probably in a language we do not carry.
-    // Meet activates the focused primary action on Enter, so this is the one
-    // language-independent way in. Best-effort: untrusted key events are often
-    // ignored, which is why it is a fallback and not the primary path.
+  /** Clicks join if it is there. Does nothing at all if it is not. */
+  async clickJoin(): Promise<JoinClick> {
+    const found = this.findJoin();
+    if (found === null) return { clicked: false, label: '', needsAdmission: false };
+
+    found.el.click();
+    return {
+      clicked: true,
+      label: found.label,
+      needsAdmission: ASKS_FOR_ADMISSION.test(found.label),
+    };
+  }
+
+  /**
+   * The language fallback: Meet activates the focused primary action on Enter.
+   *
+   * Separate from clickJoin, and used at most once by the driver. Synthetic key
+   * events are usually ignored by Meet's React handlers, so this is best-effort
+   * — and firing it on every poll for three minutes is ninety synthetic
+   * keypresses into a live page, which is not best-effort, it is vandalism.
+   */
+  pressEnter(): void {
     this.doc.dispatchEvent(
       new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }),
     );
-    return false;
   }
 
   isInLobby(): boolean {
@@ -161,6 +203,8 @@ export interface JoinOutcome {
   readonly ok: boolean;
   /** True if we were ever observed waiting for admission. */
   readonly wasInLobby: boolean;
+  /** The join button said "Ask to join" — a host had to let us in. */
+  readonly needsAdmission: boolean;
   readonly error?: string;
   readonly report: readonly ControlReport[];
 }
@@ -169,9 +213,35 @@ export const DEFAULT_JOIN_TIMEOUT_MS = 180_000;
 export const DEFAULT_JOIN_POLL_MS = 2000;
 
 /**
- * Runs the loop into the meeting. Each pass mutes, tries to click join, and
- * checks whether we are in yet — so if clickJoin() cannot find the button, a
- * human clicking it themselves still gets us there.
+ * How long to leave a click alone before deciding it did not land.
+ *
+ * The click that gets us in is the FIRST one; every later one is a retry for a
+ * button that did not respond. Retrying on every poll is what broke "Ask to
+ * join" meetings: each click withdraws and re-issues the knock, so the host's
+ * "someone wants to join" prompt kept vanishing and reappearing and admission
+ * never completed.
+ */
+export const RECLICK_AFTER_MS = 10_000;
+
+/**
+ * Runs the loop into the meeting.
+ *
+ * Three states, and the middle one is the whole point:
+ *
+ *   pre-join   the join button is on screen. Mute, and click it once the mic
+ *              and camera are confirmed off.
+ *   waiting    clicked, button gone, still not in the call — we are in the
+ *              queue for admission. Do nothing but wait.
+ *   in call    the captions or leave control exists. Done.
+ *
+ * "waiting" is derived from the button's disappearance rather than matched
+ * against Meet's waiting-room markup. Both signals are used, but only the
+ * derived one is trustworthy: the lobby selector has never been confirmed
+ * against a live meeting, and when it silently fails to match, a selector-only
+ * design falls back to hammering the join button.
+ *
+ * Because each pass re-checks isInCall(), a human clicking "Join now" or
+ * accepting the admission themselves still gets us there.
  */
 export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promise<JoinOutcome> {
   const {
@@ -184,27 +254,66 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
 
   const join = new MeetJoin(doc);
   const deadline = now() + timeoutMs;
+
   let wasInLobby = false;
   let everConfirmedOff = false;
+  let needsAdmission = false;
+  let lastClickAt: number | null = null;
+  let pressedEnter = false;
+
+  const enterLobby = (): void => {
+    if (wasInLobby) return;
+    wasInLobby = true;
+    onLobby?.();
+  };
 
   while (now() < deadline) {
     if (join.isInCall()) {
-      return { ok: true, wasInLobby, report: join.report() };
+      return { ok: true, wasInLobby, needsAdmission, report: join.report() };
     }
 
     await join.muteMicAndCamera();
 
+    // Meet's own waiting screen, on the occasions we can see it.
     if (join.isInLobby()) {
-      if (!wasInLobby) {
-        wasInLobby = true;
-        onLobby?.();
+      enterLobby();
+      await sleep(pollMs);
+      continue;
+    }
+
+    const button = join.findJoin();
+
+    if (button === null) {
+      if (lastClickAt !== null) {
+        // Clicked, button gone, not in the call: the waiting room, whatever it
+        // looks like. Nothing to do but let the host get to us.
+        enterLobby();
+      } else if (!pressedEnter && join.micAndCameraConfirmedOff()) {
+        // No button we recognise and we have never clicked one — the label is
+        // in a language we do not carry. Once, never on a loop.
+        everConfirmedOff = true;
+        pressedEnter = true;
+        join.pressEnter();
       }
-    } else if (join.micAndCameraConfirmedOff()) {
-      // The safety gate. Joining with a live microphone puts the bot audibly
-      // into someone's meeting, so a click we are not certain about is worse
-      // than not joining at all — we wait for the next pass instead.
+      await sleep(pollMs);
+      continue;
+    }
+
+    // The safety gate. Joining with a live microphone puts the bot audibly into
+    // someone's meeting, so a click we are not certain about is worse than not
+    // joining at all — we wait for the next pass instead.
+    const due = lastClickAt === null || now() - lastClickAt >= RECLICK_AFTER_MS;
+    if (due && join.micAndCameraConfirmedOff()) {
       everConfirmedOff = true;
-      await join.clickJoin();
+      const click = await join.clickJoin();
+      if (click.clicked) {
+        lastClickAt = now();
+        if (click.needsAdmission) {
+          // The button said so itself; no need to wait and infer it.
+          needsAdmission = true;
+          enterLobby();
+        }
+      }
     }
 
     await sleep(pollMs);
@@ -212,13 +321,13 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
 
   // One final check: the last sleep may have straddled admission.
   if (join.isInCall()) {
-    return { ok: true, wasInLobby, report: join.report() };
+    return { ok: true, wasInLobby, needsAdmission, report: join.report() };
   }
 
   const secs = Math.round(timeoutMs / 1000);
   let error: string;
   if (wasInLobby) {
-    error = `not admitted from the lobby within ${secs}s`;
+    error = `the host did not admit the notetaker within ${secs}s`;
   } else if (!everConfirmedOff) {
     // Never joined because we could never prove the mic and camera were off.
     // Distinct from a plain timeout: it means the controls did not resolve, so
@@ -228,5 +337,5 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
     error = `could not get into the meeting within ${secs}s`;
   }
 
-  return { ok: false, wasInLobby, error, report: join.report() };
+  return { ok: false, wasInLobby, needsAdmission, error, report: join.report() };
 }

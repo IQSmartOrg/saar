@@ -64,8 +64,12 @@ export const MEET_CONTROLS: MeetControls = {
   },
   join: {
     // The join button carries no stable jsname or icon — text is all there is,
-    // so this one control is genuinely English-only. clickJoin() falls back to
-    // pressing Enter, which Meet treats as "join" in any language.
+    // so this one control is genuinely English-only. The driver falls back to
+    // pressing Enter once, which Meet treats as "join" in any language.
+    //
+    // "ask to join" must stay in this list: a meeting the notetaker has not
+    // been invited to shows that instead of "join now", and it is the label
+    // that tells us a host has to admit us.
     text: ['join now', 'ask to join', 'join anyway', 'join meeting', 'join'],
     aria: /^(join now|ask to join)/i,
   },
