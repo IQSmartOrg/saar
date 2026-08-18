@@ -650,3 +650,132 @@ describe('joinMeeting — stage budgets', () => {
     expect(out.visited.every((v) => v.ms >= 0)).toBe(true);
   });
 });
+
+/**
+ * The notetaker tab is opened with `active: false`, and Chrome deprioritizes
+ * rendering in hidden tabs. Meet can take a minute or more to draw its pre-join
+ * screen there. A budget calibrated on a visible tab made the bot give up
+ * before Meet had drawn anything, so it only joined if a human clicked onto the
+ * tab and prompted Chrome to prioritise it.
+ */
+describe('joinMeeting — a slow background tab', () => {
+  const OFF =
+    `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true"></button>` +
+    `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true"></button>`;
+
+  /** Renders the pre-join screen only after `afterMs`, as a hidden tab does. */
+  function slowRender(afterMs: number) {
+    let t = 0;
+    return {
+      now: () => t,
+      sleep: (ms: number) => {
+        t += ms;
+        if (t === afterMs) {
+          document.body.innerHTML = OFF + control({ id: 'join', label: 'Join now' });
+          document.querySelector('#join')!.addEventListener('click', () => {
+            document.body.innerHTML = control({ jsname: 'CQylAd', aria: 'Leave call' });
+          });
+        }
+        return Promise.resolve();
+      },
+    };
+  }
+
+  it('still joins when Meet takes a minute to render', async () => {
+    document.body.innerHTML = '';
+    const clock = slowRender(60_000);
+
+    const out = await joinMeeting(document, { ...clock, pollMs: 2000 });
+
+    expect(out.ok).toBe(true);
+    expect(out.visited[0]!.state).toBe('booting');
+    expect(out.visited[0]!.ms).toBeGreaterThanOrEqual(60_000);
+  });
+
+  it('the default booting budget covers a render far slower than a visible tab', async () => {
+    // Guards the number itself: 20s was calibrated on a foreground tab and is
+    // the regression this test exists to prevent coming back.
+    document.body.innerHTML = '';
+    const clock = slowRender(90_000);
+
+    const out = await joinMeeting(document, { ...clock, pollMs: 2000 });
+
+    expect(out.ok).toBe(true);
+  });
+
+  it('still gives up eventually on a page that never renders', async () => {
+    document.body.innerHTML = '';
+    let t = 0;
+    const out = await joinMeeting(document, {
+      now: () => t,
+      sleep: (ms: number) => { t += ms; return Promise.resolve(); },
+      pollMs: 2000,
+    });
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/pre-join screen never appeared/);
+    expect(t).toBeLessThan(150_000);
+  });
+});
+
+/**
+ * Disabled controls.
+ *
+ * Meet renders the mic and camera buttons disabled while it is still acquiring
+ * devices — long enough to matter in the hidden tab the notetaker runs in. The
+ * safety gate resolved them through the click filter, which discards disabled
+ * controls, so it could not confirm a mute it was looking straight at and the
+ * bot silently declined to join until someone focused the tab.
+ */
+describe('MeetJoin — controls that are present but not pressable', () => {
+  const disabledOff =
+    `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true" aria-disabled="true"></button>` +
+    `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true" aria-disabled="true"></button>`;
+
+  it('confirms a mute that is reported by a disabled control', () => {
+    document.body.innerHTML = disabledOff;
+    expect(new MeetJoin(document).micAndCameraConfirmedOff()).toBe(true);
+  });
+
+  it('reads the state even though the control cannot be clicked', () => {
+    document.body.innerHTML = disabledOff;
+    expect(new MeetJoin(document).muteState()).toEqual({ mic: true, camera: true });
+  });
+
+  it('does not report a mute that is not there', () => {
+    document.body.innerHTML = disabledOff.replace(/data-is-muted="true"/g, 'data-is-muted="false"');
+    expect(new MeetJoin(document).micAndCameraConfirmedOff()).toBe(false);
+  });
+
+  it('never clicks a disabled control, since the click would do nothing', async () => {
+    document.body.innerHTML = disabledOff.replace(/data-is-muted="true"/g, 'data-is-muted="false"');
+    let clicks = 0;
+    document.querySelectorAll('button').forEach((b) => b.addEventListener('click', () => clicks++));
+    await new MeetJoin(document).muteMicAndCamera();
+    expect(clicks).toBe(0);
+  });
+
+  it('still clicks an enabled control that reads as on', async () => {
+    document.body.innerHTML =
+      `<button role="button" jsname="hw0c9" aria-label="Turn off microphone" data-is-muted="false"></button>`;
+    let clicks = 0;
+    document.querySelector('button')!.addEventListener('click', () => clicks++);
+    await new MeetJoin(document).muteMicAndCamera();
+    expect(clicks).toBe(1);
+  });
+
+  it('joins a meeting whose mute controls are disabled but already off', async () => {
+    // End to end: this is the case that stopped the bot joining on its own.
+    document.body.innerHTML = disabledOff + control({ id: 'join', label: 'Join now' });
+    document.querySelector('#join')!.addEventListener('click', () => {
+      document.body.innerHTML = control({ jsname: 'CQylAd', aria: 'Leave call' });
+    });
+    let t = 0;
+    const out = await joinMeeting(document, {
+      now: () => t,
+      sleep: (ms: number) => { t += ms; return Promise.resolve(); },
+      pollMs: 2000,
+    });
+    expect(out.ok).toBe(true);
+  });
+});
