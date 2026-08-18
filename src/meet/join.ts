@@ -1,6 +1,7 @@
 import { LOBBY_INDICATOR, MEET_CONTROLS, type MeetControls } from '@/meet/controls';
 import { resolveControl, visibleLabel, type MatchStrategy } from '@/meet/resolve';
-import { sleep as realSleep, type Sleep } from '@/utils/sleep';
+import type { Sleep } from '@/utils/sleep';
+import { runStateMachine, type StateVisit } from '@/utils/stateMachine';
 
 /**
  * Getting into a Google Meet call with the microphone and camera off.
@@ -187,14 +188,13 @@ export function isInCall(doc: Document): boolean {
  * ------------------------------------------------------------------ */
 
 export interface JoinOptions {
-  /**
-   * One patient budget covering the whole path in — pre-join screen, clicking
-   * join, and waiting in the lobby to be admitted — rather than separate short
-   * ones, so a human clicking "Join now" manually still works.
-   */
-  readonly timeoutMs?: number;
+  /** Per-stage time budgets. Partial: anything omitted keeps its default. */
+  readonly budgets?: Partial<JoinBudgets>;
   readonly pollMs?: number;
+  /** Fired once, the first time we are observed queueing for admission. */
   readonly onLobby?: () => void;
+  /** Every stage transition, for logging what actually happened. */
+  readonly onState?: (state: JoinState) => void;
   readonly sleep?: Sleep;
   readonly now?: () => number;
 }
@@ -205,11 +205,12 @@ export interface JoinOutcome {
   readonly wasInLobby: boolean;
   /** The join button said "Ask to join" — a host had to let us in. */
   readonly needsAdmission: boolean;
+  /** Each stage occupied and how long it took, for diagnosing a slow join. */
+  readonly visited: readonly StateVisit<JoinState>[];
   readonly error?: string;
   readonly report: readonly ControlReport[];
 }
 
-export const DEFAULT_JOIN_TIMEOUT_MS = 180_000;
 export const DEFAULT_JOIN_POLL_MS = 2000;
 
 /**
@@ -224,36 +225,56 @@ export const DEFAULT_JOIN_POLL_MS = 2000;
 export const RECLICK_AFTER_MS = 10_000;
 
 /**
- * Runs the loop into the meeting.
+ * The stages of getting in, each with its own budget.
  *
- * Three states, and the middle one is the whole point:
+ *   booting   nothing recognised yet — the page is still rendering
+ *   prejoin   the join button is up; get the mic and camera off, then click
+ *   waiting   clicked; queued for a host to admit us
+ *   in-call   done
  *
- *   pre-join   the join button is on screen. Mute, and click it once the mic
- *              and camera are confirmed off.
- *   waiting    clicked, button gone, still not in the call — we are in the
- *              queue for admission. Do nothing but wait.
- *   in call    the captions or leave control exists. Done.
+ * Separate budgets because the stages run at different speeds. A control that
+ * has not rendered in 20s is not going to — that points at Meet's DOM having
+ * changed, and sitting there for three minutes tells us nothing more. A host
+ * who has not pressed Admit yet may simply be talking, and deserves minutes.
+ * One shared budget serves neither, and lets a slow early stage silently eat
+ * the time the later one needed.
+ */
+export type JoinState = 'booting' | 'prejoin' | 'waiting' | 'in-call';
+
+export interface JoinBudgets {
+  readonly bootingMs: number;
+  readonly prejoinMs: number;
+  readonly waitingMs: number;
+  /** Backstop: per-state budgets reset on re-entry, so a flapping page needs a cap. */
+  readonly totalMs: number;
+}
+
+export const DEFAULT_JOIN_BUDGETS: JoinBudgets = {
+  bootingMs: 20_000,
+  prejoinMs: 45_000,
+  waitingMs: 300_000,
+  totalMs: 360_000,
+};
+
+/**
+ * Runs the stages into the meeting.
  *
- * "waiting" is derived from the button's disappearance rather than matched
- * against Meet's waiting-room markup. Both signals are used, but only the
- * derived one is trustworthy: the lobby selector has never been confirmed
- * against a live meeting, and when it silently fails to match, a selector-only
- * design falls back to hammering the join button.
- *
- * Because each pass re-checks isInCall(), a human clicking "Join now" or
- * accepting the admission themselves still gets us there.
+ * The state is observed from the DOM on every tick, never remembered — see
+ * utils/stateMachine.ts. That is what lets a human click "Join now" or accept
+ * the admission themselves and have the bot simply notice, and what stops the
+ * bot sitting in a stage the page left minutes ago.
  */
 export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promise<JoinOutcome> {
   const {
-    timeoutMs = DEFAULT_JOIN_TIMEOUT_MS,
     pollMs = DEFAULT_JOIN_POLL_MS,
     onLobby,
-    sleep = realSleep,
+    onState,
+    sleep,
     now = () => Date.now(),
   } = opts;
+  const budgets = { ...DEFAULT_JOIN_BUDGETS, ...opts.budgets };
 
   const join = new MeetJoin(doc);
-  const deadline = now() + timeoutMs;
 
   let wasInLobby = false;
   let everConfirmedOff = false;
@@ -261,81 +282,114 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
   let lastClickAt: number | null = null;
   let pressedEnter = false;
 
-  const enterLobby = (): void => {
-    if (wasInLobby) return;
-    wasInLobby = true;
-    onLobby?.();
+  /**
+   * The one piece of our own bookkeeping the observation depends on, and it is
+   * a fact about an action we took rather than a guess about the page: once we
+   * have clicked and the button is gone while we are still not in the call, we
+   * are in the queue — whatever the waiting screen happens to look like.
+   */
+  const observe = (): JoinState => {
+    if (join.isInCall()) return 'in-call';
+    if (join.isInLobby()) return 'waiting';
+    if (join.findJoin() !== null) return 'prejoin';
+    return lastClickAt === null ? 'booting' : 'waiting';
   };
 
-  while (now() < deadline) {
-    if (join.isInCall()) {
-      return { ok: true, wasInLobby, needsAdmission, report: join.report() };
-    }
+  const secs = (ms: number): number => Math.round(ms / 1000);
 
-    await join.muteMicAndCamera();
+  const result = await runStateMachine<JoinState>({
+    observe,
+    done: ['in-call'],
+    pollMs,
+    totalBudgetMs: budgets.totalMs,
+    ...(sleep ? { sleep } : {}),
+    now,
+    states: {
+      booting: {
+        budgetMs: budgets.bootingMs,
+        onEnter: (c) => onState?.(c.state),
+        onTick: async () => {
+          // The controls may render before the join button does.
+          await join.muteMicAndCamera();
 
-    // Meet's own waiting screen, on the occasions we can see it.
-    if (join.isInLobby()) {
-      enterLobby();
-      await sleep(pollMs);
-      continue;
-    }
+          // No button we recognise and we have never clicked one — the label is
+          // in a language we do not carry. Meet activates the focused primary
+          // action on Enter. Once, never on a loop: ninety synthetic keypresses
+          // into a live page is not best-effort.
+          if (!pressedEnter && join.micAndCameraConfirmedOff()) {
+            everConfirmedOff = true;
+            pressedEnter = true;
+            join.pressEnter();
+          }
+        },
+        onTimeout: (c) =>
+          `Meet's pre-join screen never appeared within ${secs(c.msInState)}s — its DOM may have changed`,
+      },
 
-    const button = join.findJoin();
+      prejoin: {
+        budgetMs: budgets.prejoinMs,
+        onEnter: (c) => onState?.(c.state),
+        onTick: async () => {
+          await join.muteMicAndCamera();
 
-    if (button === null) {
-      if (lastClickAt !== null) {
-        // Clicked, button gone, not in the call: the waiting room, whatever it
-        // looks like. Nothing to do but let the host get to us.
-        enterLobby();
-      } else if (!pressedEnter && join.micAndCameraConfirmedOff()) {
-        // No button we recognise and we have never clicked one — the label is
-        // in a language we do not carry. Once, never on a loop.
-        everConfirmedOff = true;
-        pressedEnter = true;
-        join.pressEnter();
-      }
-      await sleep(pollMs);
-      continue;
-    }
+          // The safety gate. Joining with a live microphone puts the bot audibly
+          // into someone's meeting, so a click we are not certain about is worse
+          // than not joining at all — we wait for the next tick instead. A
+          // control clicked this tick still reads "on" until the next one, so
+          // one cycle of latency here is the price of certainty.
+          const due = lastClickAt === null || now() - lastClickAt >= RECLICK_AFTER_MS;
+          if (!due || !join.micAndCameraConfirmedOff()) return;
 
-    // The safety gate. Joining with a live microphone puts the bot audibly into
-    // someone's meeting, so a click we are not certain about is worse than not
-    // joining at all — we wait for the next pass instead.
-    const due = lastClickAt === null || now() - lastClickAt >= RECLICK_AFTER_MS;
-    if (due && join.micAndCameraConfirmedOff()) {
-      everConfirmedOff = true;
-      const click = await join.clickJoin();
-      if (click.clicked) {
-        lastClickAt = now();
-        if (click.needsAdmission) {
-          // The button said so itself; no need to wait and infer it.
-          needsAdmission = true;
-          enterLobby();
-        }
-      }
-    }
+          everConfirmedOff = true;
+          const click = await join.clickJoin();
+          if (!click.clicked) return;
 
-    await sleep(pollMs);
-  }
+          lastClickAt = now();
+          if (click.needsAdmission) {
+            // The button said so itself — no need to wait and infer it.
+            needsAdmission = true;
+            if (!wasInLobby) {
+              wasInLobby = true;
+              onLobby?.();
+            }
+          }
+        },
+        onTimeout: (c) =>
+          everConfirmedOff
+            ? `clicked join but never got into the meeting within ${secs(c.msInState)}s`
+            : `refused to join: could not confirm microphone and camera were off within ${secs(c.msInState)}s`,
+      },
 
-  // One final check: the last sleep may have straddled admission.
-  if (join.isInCall()) {
-    return { ok: true, wasInLobby, needsAdmission, report: join.report() };
-  }
+      waiting: {
+        budgetMs: budgets.waitingMs,
+        onEnter: (c) => {
+          onState?.(c.state);
+          if (wasInLobby) return;
+          wasInLobby = true;
+          onLobby?.();
+        },
+        // Nothing to do but keep the mic and camera down. Deliberately no
+        // clicking: re-knocking is what stopped hosts being able to admit us.
+        onTick: async () => {
+          await join.muteMicAndCamera();
+        },
+        onTimeout: (c) => `the host did not admit the notetaker within ${secs(c.msInState)}s`,
+      },
 
-  const secs = Math.round(timeoutMs / 1000);
-  let error: string;
-  if (wasInLobby) {
-    error = `the host did not admit the notetaker within ${secs}s`;
-  } else if (!everConfirmedOff) {
-    // Never joined because we could never prove the mic and camera were off.
-    // Distinct from a plain timeout: it means the controls did not resolve, so
-    // it points at Meet's DOM having changed rather than at a slow host.
-    error = `refused to join: could not confirm microphone and camera were off within ${secs}s`;
-  } else {
-    error = `could not get into the meeting within ${secs}s`;
-  }
+      'in-call': {
+        budgetMs: Number.POSITIVE_INFINITY,
+        onEnter: (c) => onState?.(c.state),
+        onTimeout: () => 'unreachable: in-call is a terminal state',
+      },
+    },
+  });
 
-  return { ok: false, wasInLobby, needsAdmission, error, report: join.report() };
+  return {
+    ok: result.ok,
+    wasInLobby,
+    needsAdmission,
+    ...(result.error === undefined ? {} : { error: result.error }),
+    report: join.report(),
+    visited: result.visited,
+  };
 }

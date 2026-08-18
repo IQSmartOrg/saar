@@ -15,12 +15,6 @@ import { PORT_NAME, type Message } from '@/messaging/messages';
  * so the same sequence runs unchanged under Puppeteer for the cloud build.
  */
 
-/**
- * Covers the whole path into the meeting: pre-join screen, clicking join, and
- * waiting in the lobby to be admitted. One patient budget rather than separate
- * short ones, so a human clicking "Join now" manually still works.
- */
-const ENTER_TIMEOUT_MS = 180_000;
 const ENTER_POLL_MS = 2000;
 const CAPTION_RETRIES = 5;
 const HEALTH_INTERVAL_MS = 30_000;
@@ -46,8 +40,8 @@ export async function startNotetakerAgent(): Promise<void> {
   //    live mic is worse than not joining at all. It also waits patiently
   //    rather than failing fast, so a human clicking "Join now" themselves
   //    still gets us there.
+  // Budgets are per stage and live in meet/join.ts — see DEFAULT_JOIN_BUDGETS.
   const entered = await joinMeeting(document, {
-    timeoutMs: ENTER_TIMEOUT_MS,
     pollMs: ENTER_POLL_MS,
     onLobby: () => sendState('in-lobby'),
   });
