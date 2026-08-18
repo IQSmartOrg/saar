@@ -1,6 +1,14 @@
 // @vitest-environment happy-dom
 import { describe, it, expect, beforeEach } from 'vitest';
 import { isInCall, joinMeeting, MeetJoin } from '@/meet/join';
+
+/** The old single-budget tests, expressed as the same budget on every stage. */
+const budgetOf = (ms: number) => ({
+  bootingMs: ms,
+  prejoinMs: ms,
+  waitingMs: ms,
+  totalMs: ms,
+});
 import { iconNames, resolveControl, visibleLabel } from '@/meet/resolve';
 import { MEET_CONTROLS } from '@/meet/controls';
 
@@ -123,7 +131,7 @@ describe('MeetJoin — clicking join', () => {
       origin ??= (e.target as HTMLElement).id || 'wrapper';
     });
 
-    expect(await new MeetJoin(document).clickJoin()).toBe(true);
+    expect((await new MeetJoin(document).clickJoin()).clicked).toBe(true);
     expect(origin).toBe('realJoin');
   });
 
@@ -139,14 +147,36 @@ describe('MeetJoin — clicking join', () => {
     expect(hits).toEqual(['real']);
   });
 
-  it('reports false and falls back to Enter when no join button matches', async () => {
+  it('reports not-clicked, and clicks nothing, when no join button matches', async () => {
     document.body.innerHTML = control({ id: 'x', label: 'अभी शामिल हों' });
+    let clicks = 0;
+    document.querySelector('#x')!.addEventListener('click', () => clicks++);
+
+    const result = await new MeetJoin(document).clickJoin();
+    expect(result.clicked).toBe(false);
+    expect(clicks).toBe(0); // never guess at which button is Join
+  });
+
+  it('pressEnter is the separate language fallback', () => {
+    document.body.innerHTML = '';
     let enter = false;
     document.addEventListener('keydown', (e) => {
       if ((e as KeyboardEvent).key === 'Enter') enter = true;
     });
-    expect(await new MeetJoin(document).clickJoin()).toBe(false);
+    new MeetJoin(document).pressEnter();
     expect(enter).toBe(true);
+  });
+
+  it('flags that admission is needed when the button says "Ask to join"', async () => {
+    document.body.innerHTML = control({ id: 'j', label: 'Ask to join' });
+    const result = await new MeetJoin(document).clickJoin();
+    expect(result.clicked).toBe(true);
+    expect(result.needsAdmission).toBe(true);
+  });
+
+  it('does not flag admission for a plain "Join now"', async () => {
+    document.body.innerHTML = control({ id: 'j', label: 'Join now' });
+    expect((await new MeetJoin(document).clickJoin()).needsAdmission).toBe(false);
   });
 });
 
@@ -296,7 +326,7 @@ describe('joinMeeting driver', () => {
     let joinClicks = 0;
     document.querySelector('#join')!.addEventListener('click', () => joinClicks++);
 
-    const out = await joinMeeting(document, { ...fakeTime(), timeoutMs: 10_000, pollMs: 1000 });
+    const out = await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(10_000), pollMs: 1000 });
 
     expect(joinClicks).toBe(0);
     expect(out.ok).toBe(false);
@@ -310,7 +340,7 @@ describe('joinMeeting driver', () => {
     let joinClicks = 0;
     document.querySelector('#join')!.addEventListener('click', () => joinClicks++);
 
-    await joinMeeting(document, { ...fakeTime(), timeoutMs: 10_000, pollMs: 1000 });
+    await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(10_000), pollMs: 1000 });
     expect(joinClicks).toBe(0);
   });
 
@@ -321,7 +351,7 @@ describe('joinMeeting driver', () => {
     const t = fakeTime();
     const out = await joinMeeting(document, {
       now: t.now,
-      timeoutMs: 20_000,
+      budgets: budgetOf(20_000),
       pollMs: 1000,
       sleep: (ms) => {
         void t.sleep(ms);
@@ -364,7 +394,7 @@ describe('joinMeeting driver', () => {
       document.body.innerHTML = control({ jsname: 'CQylAd', aria: 'Leave call' });
     });
 
-    const out = await joinMeeting(document, { ...fakeTime(), timeoutMs: 20_000, pollMs: 1000 });
+    const out = await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(20_000), pollMs: 1000 });
 
     expect(out.ok).toBe(true);
     expect(seq).toEqual(['mic', 'cam', 'join']); // both off strictly before join
@@ -375,14 +405,14 @@ describe('joinMeeting driver', () => {
     let lobbyCalls = 0;
     const out = await joinMeeting(document, {
       ...fakeTime(),
-      timeoutMs: 10_000,
+      budgets: budgetOf(10_000),
       pollMs: 1000,
       onLobby: () => lobbyCalls++,
     });
     expect(out.ok).toBe(false);
     expect(out.wasInLobby).toBe(true);
     expect(lobbyCalls).toBe(1);
-    expect(out.error).toMatch(/not admitted from the lobby/);
+    expect(out.error).toMatch(/did not admit/);
   });
 
   it('never clicks join while sitting in the lobby', async () => {
@@ -390,21 +420,23 @@ describe('joinMeeting driver', () => {
       `<div aria-label="Asking to join"></div>` + control({ id: 'join', label: 'Join now' });
     let joinClicks = 0;
     document.querySelector('#join')!.addEventListener('click', () => joinClicks++);
-    await joinMeeting(document, { ...fakeTime(), timeoutMs: 10_000, pollMs: 1000 });
+    await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(10_000), pollMs: 1000 });
     expect(joinClicks).toBe(0);
   });
 
-  it('distinguishes never-got-in from not-admitted', async () => {
-    // Mic and camera confirmed off, so the safety gate is satisfied and we do
-    // try to join — there is simply no join button to click.
+  it('names the stage that stalled: no join button is a pre-join failure', async () => {
+    // Mic and camera confirmed off, so the safety gate is satisfied — there is
+    // simply no join button to click, ever. That is a different failure from
+    // being queued and never admitted, and it now says so.
     document.body.innerHTML =
       `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true"></button>` +
       `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true"></button>` +
       control({ id: 'x', label: 'Upgrade' });
-    const out = await joinMeeting(document, { ...fakeTime(), timeoutMs: 5000, pollMs: 1000 });
+    const out = await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(5000), pollMs: 1000 });
     expect(out.ok).toBe(false);
     expect(out.wasInLobby).toBe(false);
-    expect(out.error).toMatch(/could not get into the meeting/);
+    expect(out.error).toMatch(/pre-join screen never appeared/);
+    expect(out.error).not.toMatch(/admit/);
   });
 
   it('succeeds if admission lands during the final sleep', async () => {
@@ -414,7 +446,7 @@ describe('joinMeeting driver', () => {
     const t = fakeTime();
     const out = await joinMeeting(document, {
       now: t.now,
-      timeoutMs: 3000,
+      budgets: budgetOf(3000),
       pollMs: 1000,
       sleep: (ms) => {
         void t.sleep(ms);
@@ -425,5 +457,196 @@ describe('joinMeeting driver', () => {
       },
     });
     expect(out.ok).toBe(true);
+  });
+});
+
+/**
+ * "Ask to join" meetings.
+ *
+ * The reported bug: joining worked where the button said "Join now" and failed
+ * where it said "Ask to join". The difference is that the second one puts you
+ * in a queue, and the old loop kept clicking throughout it — every click
+ * withdrew and re-issued the knock, so the host's prompt kept disappearing.
+ */
+describe('joinMeeting — meetings that require admission', () => {
+  function fakeTime() {
+    let t = 0;
+    return { now: () => t, sleep: (ms: number) => { t += ms; return Promise.resolve(); } };
+  }
+
+  /** A pre-join screen with the mic and camera already off. */
+  const OFF_CONTROLS =
+    `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true"></button>` +
+    `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true"></button>`;
+
+  it('clicks "Ask to join" exactly once while waiting to be admitted', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    let clicks = 0;
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      clicks++;
+      // Meet swaps the button for its waiting screen — whose markup we do not
+      // match, which is exactly the condition that used to cause re-clicking.
+      document.body.innerHTML = OFF_CONTROLS + '<div>Waiting for someone to let you in</div>';
+    });
+
+    const out = await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(60_000), pollMs: 1000 });
+
+    expect(clicks).toBe(1);
+    expect(out.ok).toBe(false); // never admitted, in this test
+    expect(out.needsAdmission).toBe(true);
+  });
+
+  it('reports the lobby immediately, on the button label alone', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      document.body.innerHTML = OFF_CONTROLS;
+    });
+
+    const seen: number[] = [];
+    const clock = fakeTime();
+    await joinMeeting(document, {
+      ...clock,
+      budgets: budgetOf(20_000),
+      pollMs: 1000,
+      onLobby: () => seen.push(clock.now()),
+    });
+
+    // Once, and on the pass that clicked — not after some later inference.
+    expect(seen).toEqual([0]);
+  });
+
+  it('succeeds when the host admits us part-way through the wait', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      document.body.innerHTML = OFF_CONTROLS + '<div>Asking to be let in</div>';
+      // The host lets us in a few polls later.
+      setTimeout(() => {}, 0);
+    });
+
+    const clock = fakeTime();
+    let admitted = false;
+    const out = await joinMeeting(document, {
+      ...clock,
+      budgets: budgetOf(60_000),
+      pollMs: 1000,
+      sleep: (ms: number) => {
+        clock.sleep(ms);
+        if (!admitted && clock.now() >= 5000) {
+          admitted = true;
+          document.body.innerHTML = control({ jsname: 'CQylAd', aria: 'Leave call' });
+        }
+        return Promise.resolve();
+      },
+    });
+
+    expect(out.ok).toBe(true);
+    expect(out.wasInLobby).toBe(true);
+  });
+
+  it('retries a click that did not take, but slowly', async () => {
+    // The button staying put means the click did not land. Worth retrying —
+    // just not ninety times.
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'ask', label: 'Ask to join' });
+    let clicks = 0;
+    document.querySelector('#ask')!.addEventListener('click', () => clicks++);
+
+    await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(60_000), pollMs: 1000 });
+
+    // 60s at one retry per 10s, not 60 at one per poll.
+    expect(clicks).toBeGreaterThan(1);
+    expect(clicks).toBeLessThanOrEqual(7);
+  });
+
+  it('never presses Enter more than once when no button is recognised', async () => {
+    document.body.innerHTML = OFF_CONTROLS + control({ id: 'x', label: 'अभी शामिल हों' });
+    let enters = 0;
+    document.addEventListener('keydown', (e) => {
+      if ((e as KeyboardEvent).key === 'Enter') enters++;
+    });
+
+    await joinMeeting(document, { ...fakeTime(), budgets: budgetOf(60_000), pollMs: 1000 });
+
+    expect(enters).toBe(1);
+  });
+});
+
+/**
+ * Per-stage budgets, which is the point of the state machine.
+ *
+ * A meeting whose pre-join screen is slow must not lose the admission time it
+ * was going to need — under one shared budget it silently did.
+ */
+describe('joinMeeting — stage budgets', () => {
+  function fakeTime() {
+    let t = 0;
+    return { now: () => t, sleep: (ms: number) => { t += ms; return Promise.resolve(); } };
+  }
+
+  const OFF =
+    `<button role="button" jsname="hw0c9" aria-label="Turn on microphone" data-is-muted="true"></button>` +
+    `<button role="button" jsname="psRWwc" aria-label="Turn on camera" data-is-muted="true"></button>`;
+
+  it('a slow pre-join screen does not eat the admission budget', async () => {
+    // Nothing at all for 15s, then the button appears; we click and queue.
+    document.body.innerHTML = '';
+    const clock = fakeTime();
+
+    const out = await joinMeeting(document, {
+      now: clock.now,
+      pollMs: 1000,
+      budgets: { bootingMs: 20_000, prejoinMs: 20_000, waitingMs: 40_000, totalMs: 300_000 },
+      sleep: (ms: number) => {
+        clock.sleep(ms);
+        if (clock.now() === 15_000) {
+          document.body.innerHTML = OFF + control({ id: 'ask', label: 'Ask to join' });
+          document.querySelector('#ask')!.addEventListener('click', () => {
+            document.body.innerHTML = OFF; // queued; waiting screen we cannot match
+          });
+        }
+        return Promise.resolve();
+      },
+    });
+
+    expect(out.ok).toBe(false);
+    expect(out.needsAdmission).toBe(true);
+    // It failed on the WAITING budget, having spent 15s booting first. Under a
+    // single 40s budget it would have died mid-queue instead.
+    expect(out.error).toMatch(/did not admit/);
+    expect(clock.now()).toBeGreaterThan(50_000);
+  });
+
+  it('gives up on a blank page in seconds, not minutes', async () => {
+    document.body.innerHTML = '';
+    const clock = fakeTime();
+
+    const out = await joinMeeting(document, {
+      now: clock.now,
+      pollMs: 1000,
+      sleep: (ms: number) => { clock.sleep(ms); return Promise.resolve(); },
+      budgets: { bootingMs: 20_000, prejoinMs: 45_000, waitingMs: 300_000, totalMs: 360_000 },
+    });
+
+    expect(out.ok).toBe(false);
+    expect(out.error).toMatch(/pre-join screen never appeared/);
+    // The old design sat here for the full 180s learning nothing.
+    expect(clock.now()).toBeLessThan(25_000);
+  });
+
+  it('records the stages it went through, for diagnosing a slow join', async () => {
+    document.body.innerHTML = OFF + control({ id: 'ask', label: 'Ask to join' });
+    document.querySelector('#ask')!.addEventListener('click', () => {
+      document.body.innerHTML = OFF;
+    });
+    const clock = fakeTime();
+
+    const out = await joinMeeting(document, {
+      now: clock.now,
+      pollMs: 1000,
+      sleep: (ms: number) => { clock.sleep(ms); return Promise.resolve(); },
+      budgets: { bootingMs: 5000, prejoinMs: 5000, waitingMs: 5000, totalMs: 60_000 },
+    });
+
+    expect(out.visited.map((v) => v.state)).toEqual(['prejoin', 'waiting']);
+    expect(out.visited.every((v) => v.ms >= 0)).toBe(true);
   });
 });
