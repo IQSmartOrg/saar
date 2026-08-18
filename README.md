@@ -186,6 +186,47 @@ branch and open the PR against `main`.
 - **Never report success you have not verified.** A function that returns `ok`
   without checking is worse than one that throws.
 
+### Debugging a meeting that goes wrong
+
+**Read the service worker's console, not the notetaker tab's.** The notetaker
+runs in a hidden background tab, and reading that tab's own console means
+clicking onto it — which makes Chrome start rendering it, which is frequently
+the very thing you are trying to diagnose. Observing it changes it. So the bot
+reports what it can see over its port, and the worker logs it.
+
+Open `chrome://extensions` → **Saar** → click **`service worker`**.
+
+Two lines matter. The first arrives every 5s while the bot is trying to get in:
+
+```
+[saar] bot 40cfade6 visibility=hidden | mic:jsname camera:jsname join:text captions:none leave:none | mic=true camera=true
+```
+
+| Field | Reading it |
+|---|---|
+| `visibility` | The **real** value. The extension spoofs this for Meet, but only in the MAIN world — content scripts stay in the isolated world so this stays honest. `hidden` is normal and expected. |
+| `mic:` … | Which resolver layer matched each control. `jsname` and `icon` are durable; `aria` and `text` are English-only; `none` means it was not found. |
+| `mic=` `camera=` | Mute state as the page reports it. `?` means the control was not found at all. |
+
+A healthy notetaker shows `visibility=hidden` with the controls resolving and
+`mic=true camera=true`. `mic:none camera:none` while Meet is clearly loaded
+means the page has stopped rendering — see `agents/keepRendering.ts`. Drift from
+`jsname` down to `text` is an early warning that Meet changed its DOM, visible
+before anything actually breaks.
+
+The second line arrives once, when the join finishes:
+
+```
+[saar] join stages: booting 47s → prejoin 4s → in-call 0s   mic:jsname camera:jsname join:text
+```
+
+That is where the per-stage budgets in `meet/join.ts` should come from —
+measured on a real meeting rather than guessed.
+
+**After changing anything, reload the extension** at `chrome://extensions`.
+A rebuild alone does nothing, and content-script changes only reach tabs opened
+afterwards, so start a fresh meeting rather than reusing one.
+
 **Releasing** is a manual workflow run: Actions → Release → enter a version like
 `0.2.0`. It bumps the version, runs the full check, builds, cuts a
 `release-<date>-<epoch>-<sha>` branch and publishes the zip to a GitHub Release.

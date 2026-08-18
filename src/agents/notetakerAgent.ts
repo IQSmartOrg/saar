@@ -1,6 +1,6 @@
 import { CaptionScraper } from '@/meet/CaptionScraper';
 import { startCaptions } from '@/meet/captions';
-import { isInCall, joinMeeting } from '@/meet/join';
+import { inspectControls, isInCall, joinMeeting } from '@/meet/join';
 import { isBotTab } from '@/meet/meetingCode';
 import { DEFAULT_BATCHER_OPTIONS, SegmentBatcher } from '@/capture/SegmentBatcher';
 import { SystemClock } from '@/utils/clock';
@@ -16,6 +16,7 @@ import { PORT_NAME, type Message } from '@/messaging/messages';
  */
 
 const ENTER_POLL_MS = 2000;
+const DIAG_INTERVAL_MS = 5000;
 const CAPTION_RETRIES = 5;
 const HEALTH_INTERVAL_MS = 30_000;
 
@@ -35,6 +36,20 @@ export async function startNotetakerAgent(): Promise<void> {
 
   sendState('joining');
 
+  // Reported to the worker every few seconds until we are in, because the tab's
+  // own console cannot be read without focusing it — and focusing it is the
+  // very thing that changes how Chrome renders it.
+  const diag = setInterval(() => {
+    const { controls, mute } = inspectControls(document);
+    send({
+      type: 'BOT_DIAG',
+      sessionId,
+      visibility: document.visibilityState,
+      controls: controls.map((c) => `${c.control}:${c.matchedBy}`).join(' '),
+      mute: `mic=${mute.mic ?? '?'} camera=${mute.camera ?? '?'}`,
+    });
+  }, DIAG_INTERVAL_MS);
+
   // 1. Get in. joinMeeting mutes on every pass and will not click Join until it
   //    has confirmed the microphone and camera read as off — joining with a
   //    live mic is worse than not joining at all. It also waits patiently
@@ -45,6 +60,18 @@ export async function startNotetakerAgent(): Promise<void> {
     pollMs: ENTER_POLL_MS,
     onLobby: () => sendState('in-lobby'),
   });
+
+  // How long each stage actually took, in the tab it actually runs in. This is
+  // a hidden tab whose rendering Chrome deprioritizes, so the budgets above are
+  // guesses until someone reads these numbers off a real meeting.
+  clearInterval(diag);
+
+  console.info(
+    '[saar] join stages:',
+    entered.visited.map((v) => `${v.state} ${Math.round(v.ms / 1000)}s`).join(' → '),
+    entered.report.map((r) => `${r.control}:${r.matchedBy}`).join(' '),
+  );
+
   if (!entered.ok) {
     sendState('failed', entered.error);
     return;

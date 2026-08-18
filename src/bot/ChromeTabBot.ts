@@ -4,6 +4,16 @@ import { botTabUrl } from '@/meet/meetingCode';
 /**
  * The notetaker as a muted background tab.
  *
+ * A background tab, deliberately, after trying the alternative: giving it its
+ * own unfocused window did NOT make it render. Chrome's occlusion tracking
+ * counts a window entirely covered by another as hidden, so a window opened
+ * behind a maximized Chrome is throttled exactly like a background tab — it
+ * just also puts a window on the user's screen for nothing.
+ *
+ * What actually keeps it rendering is the MAIN-world content script in
+ * entrypoints/keep-rendering.content.ts, which is why this can stay the
+ * least intrusive option.
+ *
  * The only file in the bot module that touches `chrome.*` — which is the point:
  * the cloud build replaces this one class with a Puppeteer driver and reuses
  * everything in `src/meet` unchanged.

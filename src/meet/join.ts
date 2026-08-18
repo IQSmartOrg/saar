@@ -53,10 +53,41 @@ export class MeetJoin {
     private readonly lobbyIndicator: string = LOBBY_INDICATOR,
   ) {}
 
+  /** For clicking. Skips controls that cannot be pressed. */
   private find(name: keyof MeetControls): HTMLElement | null {
     const hit = resolveControl(this.doc, this.controls[name]);
     this.matches.set(name, hit?.matchedBy ?? 'none');
     return hit?.el ?? null;
+  }
+
+  /**
+   * For reading state. Includes controls that are disabled.
+   *
+   * A disabled mic button still carries `data-is-muted`, so it answers "is the
+   * mic off?" perfectly well. Reading through the click filter meant that while
+   * Meet was still acquiring devices — long enough to matter in the hidden tab
+   * this runs in — the gate could not confirm a mute it was looking straight
+   * at, and the bot silently declined to join until someone focused the tab.
+   */
+  private read(name: keyof MeetControls): HTMLElement | null {
+    const hit = resolveControl(this.doc, this.controls[name], { includeDisabled: true });
+    this.matches.set(name, hit?.matchedBy ?? 'none');
+    return hit?.el ?? null;
+  }
+
+  /** Which layer matched every control right now — for diagnosing a stuck join. */
+  probeAll(): readonly ControlReport[] {
+    for (const name of ['mic', 'camera', 'join', 'captions', 'leave'] as const) this.read(name);
+    return this.report();
+  }
+
+  /** Mute state as the page reports it, whether or not the control is pressable. */
+  muteState(): { mic: boolean | null; camera: boolean | null } {
+    const of = (name: 'mic' | 'camera'): boolean | null => {
+      const el = this.read(name);
+      return el === null ? null : this.isOff(el);
+    };
+    return { mic: of('mic'), camera: of('camera') };
   }
 
   /** Which strategy matched each control the last time it was looked up. */
@@ -79,8 +110,12 @@ export class MeetJoin {
    */
   async muteMicAndCamera(): Promise<void> {
     for (const name of ['mic', 'camera'] as const) {
-      const el = this.find(name);
-      if (el && !this.isOff(el)) el.click();
+      // Read through the unfiltered resolver, click through the filtered one:
+      // a disabled control can be read but not pressed, and asking the wrong
+      // question of it produces a null rather than an answer.
+      const state = this.read(name);
+      if (state !== null && this.isOff(state)) continue;
+      this.find(name)?.click();
     }
   }
 
@@ -99,7 +134,7 @@ export class MeetJoin {
    */
   micAndCameraConfirmedOff(): boolean {
     for (const name of ['mic', 'camera'] as const) {
-      const el = this.find(name);
+      const el = this.read(name);
       if (el === null || !this.isOff(el)) return false;
     }
     return true;
@@ -183,6 +218,15 @@ export function isInCall(doc: Document): boolean {
   return new MeetJoin(doc).isInCall();
 }
 
+/** Everything the resolver can see right now. For diagnosing a stuck join. */
+export function inspectControls(doc: Document): {
+  readonly controls: readonly ControlReport[];
+  readonly mute: { mic: boolean | null; camera: boolean | null };
+} {
+  const join = new MeetJoin(doc);
+  return { controls: join.probeAll(), mute: join.muteState() };
+}
+
 /* ------------------------------------------------------------------ *
  * Driver
  * ------------------------------------------------------------------ */
@@ -249,11 +293,31 @@ export interface JoinBudgets {
   readonly totalMs: number;
 }
 
+/**
+ * Calibrated for the tab this actually runs in: a BACKGROUND one.
+ *
+ * The notetaker tab is opened with `active: false` so it never steals focus,
+ * and Chrome deprioritizes rendering in hidden tabs — a heavy SPA like Meet can
+ * take a minute or more to put its pre-join screen up there, where it would
+ * take a couple of seconds in the foreground.
+ *
+ * `bootingMs` was 20s on the reasoning that a control which has not rendered in
+ * 20s never will. That is true of a visible tab and false of this one: it made
+ * the bot give up before Meet had drawn anything, and joining only worked if
+ * someone clicked onto the tab and prompted Chrome to prioritise it. Machine
+ * speed is the wrong model here — the budget has to cover a browser that has
+ * deliberately been told this tab does not matter.
+ *
+ * The stage timings come back in `JoinOutcome.visited`, so these can be tuned
+ * against what actually happens rather than what seems reasonable.
+ */
 export const DEFAULT_JOIN_BUDGETS: JoinBudgets = {
-  bootingMs: 20_000,
-  prejoinMs: 45_000,
+  bootingMs: 120_000,
+  prejoinMs: 60_000,
   waitingMs: 300_000,
-  totalMs: 360_000,
+  // Backstop against a page that flaps between stages forever. Comfortably
+  // above booting + prejoin + waiting, or it would cut a legitimate run short.
+  totalMs: 600_000,
 };
 
 /**

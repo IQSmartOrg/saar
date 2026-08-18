@@ -98,6 +98,7 @@ function registerMessages(deps: Routes): void {
         case 'SEGMENT_BATCH':
         case 'SOURCE_HEALTH':
         case 'BOT_PRESENCE':
+        case 'BOT_DIAG':
           break; // these arrive over the port, not sendMessage
         case 'MOM_PROGRESS':
           break; // broadcast outward only
@@ -165,6 +166,15 @@ function registerPort(deps: Routes): void {
               await sessions.withWatch(msg.sessionId, (w) => w.signal('bot-tab-hidden'));
               await sessions.end(msg.sessionId);
             }
+            break;
+
+          case 'BOT_DIAG':
+            // Deliberately console-only: this is for someone watching the
+            // worker's console while a join misbehaves, not a user-facing event.
+            console.info(
+              `[saar] bot ${msg.sessionId.slice(0, 8)} visibility=${msg.visibility}`,
+              `| ${msg.controls} | ${msg.mute}`,
+            );
             break;
 
           case 'SOURCE_HEALTH':
