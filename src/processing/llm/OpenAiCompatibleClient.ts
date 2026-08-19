@@ -7,6 +7,9 @@ import type {
   ModelInfo,
 } from '@/processing/llm/LlmClient';
 import { isLocalEndpoint, joinUrl } from '@/utils/url';
+import { logger } from '@/utils/logger';
+
+const log = logger('processing.llm.openai');
 
 /**
  * Ollama's default answer to a browser extension.
@@ -75,6 +78,7 @@ export class OpenAiCompatibleClient implements LlmClient {
     });
 
     if (!res.ok) {
+      log.severe('completion failed', { status: res.status, model: this.config.model });
       // Retry without response_format: providers that reject the field answer
       // 400, and the prompt alone is usually enough to get valid JSON back.
       if (res.status === 400 && req.jsonSchema) {

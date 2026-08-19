@@ -1,4 +1,6 @@
 import { ChromeSettingsStore } from '@/settings/ChromeSettingsStore';
+import { addSink } from '@/utils/logger';
+import type { Message } from '@/messaging/messages';
 import { byId } from '@/ui/dom';
 import { mountNowPanel } from '@/entrypoints/popup/panels/nowPanel';
 import { mountAccountPanel } from '@/entrypoints/popup/panels/accountPanel';
@@ -30,6 +32,12 @@ function showTab(which: Tab): void {
 }
 
 for (const tab of TABS) tabs[tab].addEventListener('click', () => showTab(tab));
+
+// The popup's own console closes with the popup — which is exactly when you
+// want to read what it just did. Forward to the worker, whose console stays.
+addSink((record) => {
+  void chrome.runtime.sendMessage({ type: 'LOG', record } satisfies Message).catch(() => undefined);
+});
 
 const settings = new ChromeSettingsStore();
 mountNowPanel();

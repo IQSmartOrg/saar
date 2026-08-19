@@ -4,6 +4,9 @@ import { JobStore } from '@/processing/job/JobStore';
 import { MomBuilder, planJob, progressOf, type MomJobState } from '@/processing/mom/MomBuilder';
 import { createLlmClient } from '@/processing/llm/createClient';
 import type { MomProgress } from '@/processing/mom/types';
+import { logger } from '@/utils/logger';
+
+const log = logger('processing.mom');
 
 /**
  * Driving the summarisation queue from the background worker.
@@ -56,11 +59,21 @@ export class MomRunner {
    */
   async queue(sessionId: string): Promise<void> {
     const cfg = await this.deps.settings.get();
-    if (!cfg.momEnabled) return;
+    if (!cfg.momEnabled) {
+      log.info('AI summaries are off — not queueing', { sessionId });
+      return;
+    }
 
     const segments = await this.deps.repo.getSegments(sessionId);
     const job = planJob(sessionId, segments, { contextTokens: cfg.llmContextTokens });
     await this.deps.jobs.put(job);
+
+    log.info('queued for summarising', {
+      sessionId,
+      chunks: job.chunkTexts.length,
+      speakers: job.speakers.length,
+      model: cfg.llmModel,
+    });
 
     if (job.phase === 'failed') {
       await this.deps.repo.updateSession(sessionId, { status: 'failed', error: job.error });
@@ -124,6 +137,13 @@ export class MomRunner {
     await this.deps.jobs.put(state);
     this.deps.onProgress(state.sessionId, progressOf(state));
 
+    log.info('step complete', {
+      sessionId: state.sessionId,
+      phase: state.phase,
+      notes: state.notes.length,
+      of: state.chunkTexts.length,
+    });
+
     if (state.phase === 'done' && state.minutes) {
       await this.deps.repo.saveMinutes(state.sessionId, state.minutes);
       await this.deps.repo.updateSession(state.sessionId, { status: 'complete' });
@@ -134,6 +154,7 @@ export class MomRunner {
     }
 
     if (state.phase === 'failed') {
+      log.severe('summarising failed', { sessionId: state.sessionId, reason: state.error });
       // The transcript is already saved and the job is re-runnable from it, so
       // a model failure must never read as a lost meeting.
       await this.deps.repo.updateSession(state.sessionId, {
@@ -175,6 +196,7 @@ export class MomRunner {
     const job = await this.deps.jobs.get(sessionId);
     if (job === null || job.paused) return false;
 
+    log.info('paused', { sessionId, phase: job.phase, notes: job.notes.length });
     await this.deps.jobs.put({ ...job, paused: true });
     this.abortInFlight(sessionId);
     this.deps.onProgress(sessionId, progressOf(job));
@@ -206,6 +228,7 @@ export class MomRunner {
     const job = await this.deps.jobs.get(sessionId);
     if (job === null) return false;
 
+    log.info('cancelled — partial work discarded', { sessionId, notes: job.notes.length });
     await this.deps.jobs.remove(sessionId);
     this.abortInFlight(sessionId);
     await this.deps.repo.updateSession(sessionId, { status: 'ended', error: undefined });

@@ -2,6 +2,9 @@ import type { Clock } from '@/utils/clock';
 import type { SegmentSink, SourceHealth, TranscriptSource } from '@/capture/TranscriptSource';
 import type { TranscriptSegment, TranscriptSourceKind } from '@/capture/types';
 import { CAPTION_SELECTORS, type CaptionSelectors } from '@/meet/controls';
+import { logger } from '@/utils/logger';
+
+const log = logger('meet.captionScraper');
 
 interface OpenBlock {
   readonly id: string;
@@ -63,7 +66,11 @@ export class CaptionScraper implements TranscriptSource {
   async start(sink: SegmentSink): Promise<void> {
     const region = this.region();
     this.matched = region !== null;
-    if (!region) return;
+    if (!region) {
+      log.severe('no caption region — attaching no observer, nothing will be captured');
+      return;
+    }
+    log.info('observing the caption region');
 
     this.sink = sink;
     this.startedAt = this.clock.now();
@@ -74,6 +81,7 @@ export class CaptionScraper implements TranscriptSource {
   }
 
   async stop(): Promise<void> {
+    log.info('stopping', { segmentsSeen: this.segmentsSeen, open: this.live.size });
     this.observer?.disconnect();
     this.observer = null;
     for (const { block } of this.live.values()) this.emit(block, true);

@@ -60,13 +60,13 @@ export function parseAccountLabel(
     return null;
   }
 
-  const email = match[2].trim();
+  const email = match[2]!.trim();
 
   if (!email) {
     return null;
   }
 
-  const name = cleanAccountName(match[1]);
+  const name = cleanAccountName(match[1]!);
 
   return {
     name: name || email,

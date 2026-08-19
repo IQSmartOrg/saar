@@ -1,5 +1,8 @@
 import type { JoinRequest, JoinResult, MeetingBot } from '@/bot/MeetingBot';
 import { botTabUrl } from '@/meet/meetingCode';
+import { logger } from '@/utils/logger';
+
+const log = logger('bot.chromeTab');
 
 /**
  * The notetaker as a muted background tab.
@@ -24,6 +27,7 @@ export class ChromeTabBot implements MeetingBot {
   async join(req: JoinRequest): Promise<JoinResult> {
     try {
       const url = botTabUrl(req.meetingCode, req.accountIndex, req.sessionId);
+      log.info('opening the notetaker tab', { meetingCode: req.meetingCode, accountIndex: req.accountIndex });
       const tab = await chrome.tabs.create({ url, active: false });
       if (tab.id === undefined) return { ok: false, error: 'tab has no id' };
 
@@ -34,6 +38,7 @@ export class ChromeTabBot implements MeetingBot {
       await chrome.tabs.update(tab.id, { muted: true });
       return { ok: true, tabId: tab.id };
     } catch (e) {
+      log.severe('could not open the notetaker tab', { error: e });
       return { ok: false, error: e instanceof Error ? e.message : String(e) };
     }
   }
@@ -42,6 +47,7 @@ export class ChromeTabBot implements MeetingBot {
   async leave(): Promise<void> {
     const id = this.tabId;
     this.tabId = null;
+    log.info('closing the notetaker tab', { tabId: id });
     if (id === null) return;
     try {
       await chrome.tabs.remove(id);

@@ -7,6 +7,9 @@ import { notify } from '@/background/notify';
 import { registerRoutes } from '@/background/routes';
 import { SessionCoordinator } from '@/background/SessionCoordinator';
 import { BackgroundState } from '@/background/state';
+import { logger } from '@/utils/logger';
+
+const log = logger('background');
 
 /**
  * The composition root — the only place concrete adapters are constructed.
@@ -16,6 +19,7 @@ import { BackgroundState } from '@/background/state';
  * transcript into minutes, `routes` decides what each inbound event means.
  */
 export function startBackground(): void {
+  log.info('worker starting');
   const repo = new IndexedDbTranscriptRepository();
   const settings = new ChromeSettingsStore();
   const jobs = new JobStore();
@@ -42,5 +46,6 @@ export function startBackground(): void {
   void (async () => {
     await mom.recover();
     await sessions.armWatchdogIfBusy();
+    log.info('worker ready');
   })();
 }

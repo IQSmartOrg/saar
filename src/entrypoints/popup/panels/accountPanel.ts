@@ -5,6 +5,9 @@ import {
   type GoogleAccount,
 } from '@/settings/googleAccounts';
 import { byId } from '@/ui/dom';
+import { logger } from '@/utils/logger';
+
+const log = logger('settings.accountPanel');
 
 /**
  * Choosing which Google account Saar joins meetings as.
@@ -16,10 +19,28 @@ import { byId } from '@/ui/dom';
  */
 
 const CACHE_KEY = 'saar:accounts';
+const CACHE_AT_KEY = 'saar:accountsAt';
+
+/**
+ * How long a cached account list is trusted.
+ *
+ * The scan probes every `authuser` index and each page is ~2.3MB, because the
+ * account markup sits at the very end of it — so a scan costs around 20MB.
+ * Doing that every time the popup opens is indefensible, and accounts are
+ * signed in and out rarely. Refresh always rescans, so a stale list is one
+ * click from being fixed.
+ */
+const CACHE_TTL_MS = 30 * 60_000;
 
 async function cachedAccounts(): Promise<GoogleAccount[]> {
   const raw = await chrome.storage.local.get(CACHE_KEY);
   return (raw[CACHE_KEY] as GoogleAccount[] | undefined) ?? [];
+}
+
+async function cacheAgeMs(): Promise<number> {
+  const raw = await chrome.storage.local.get(CACHE_AT_KEY);
+  const at = raw[CACHE_AT_KEY] as number | undefined;
+  return at === undefined ? Number.POSITIVE_INFINITY : Date.now() - at;
 }
 
 function describeReadiness(botAccountIndex: number | null): string {
@@ -67,14 +88,24 @@ export function mountAccountPanel(settings: SettingsStore): void {
   /** Probes for accounts and caches the result so reopening is instant. */
   async function load(): Promise<void> {
     const saved = (await settings.get()).botAccountIndex;
+    const startedAt = Date.now();
+    log.info('refreshing the account list', { savedIndex: saved });
     try {
       const accounts = await listGoogleAccounts();
-      await chrome.storage.local.set({ [CACHE_KEY]: accounts });
+      log.info('account list refreshed', {
+        count: accounts.length,
+        ms: Date.now() - startedAt,
+        accounts: accounts.map((a) => `${a.authuser}:${a.email}`),
+        savedIndex: saved,
+        savedStillPresent: saved === null || accounts.some((a) => a.authuser === saved),
+      });
+      await chrome.storage.local.set({ [CACHE_KEY]: accounts, [CACHE_AT_KEY]: Date.now() });
       render(accounts, saved);
       if (accounts.length === 0) {
         status.textContent = 'No Google accounts found — are you signed in to Google in Chrome?';
       }
     } catch (e) {
+      log.severe('could not read the Google accounts', { error: e });
       // Never leave "No accounts found" standing in for an actual error.
       render(await cachedAccounts(), saved);
       const detail = e instanceof Error ? e.message : String(e);
@@ -84,12 +115,14 @@ export function mountAccountPanel(settings: SettingsStore): void {
 
   select.addEventListener('change', () => {
     const next = select.value === '' ? null : Number(select.value);
+    log.info('notetaker account chosen', { authuser: next });
     status.textContent = describeReadiness(next);
     void settings.set({ botAccountIndex: next });
   });
 
   refresh.addEventListener('click', (e) => {
     e.preventDefault();
+    log.info('refresh clicked — rescanning regardless of the cache');
     select.replaceChildren(new Option('Loading accounts…', ''));
     void load();
   });
@@ -104,6 +137,17 @@ export function mountAccountPanel(settings: SettingsStore): void {
     } else {
       select.replaceChildren(new Option('Loading accounts…', ''));
       status.textContent = describeReadiness(cfg.botAccountIndex);
+    }
+
+    // A scan is ~20MB, so opening the popup does not trigger one unless the
+    // cached list is missing or old. Refresh is the deliberate way to force it.
+    const age = await cacheAgeMs();
+    if (cached.length > 0 && age < CACHE_TTL_MS) {
+      log.info('using the cached account list', {
+        count: cached.length,
+        ageMinutes: Math.round(age / 60_000),
+      });
+      return;
     }
     await load();
   })();

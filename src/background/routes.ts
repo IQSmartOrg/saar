@@ -4,6 +4,9 @@ import type { JobStore } from '@/processing/job/JobStore';
 import { MOM_ALARM, type MomRunner } from '@/processing/job/MomRunner';
 import { PORT_NAME, type Message, type MomAction } from '@/messaging/messages';
 import { assertNever } from '@/utils/assert';
+import { ingest, logger } from '@/utils/logger';
+
+const log = logger('background.routes');
 import { buildActivity } from '@/background/activity';
 import { notify } from '@/background/notify';
 import { probeLlm } from '@/background/probeLlm';
@@ -57,6 +60,12 @@ function registerMessages(deps: Routes): void {
       case 'MOM_CONTROL':
         void runMomAction(mom, msg.sessionId, msg.action).then(sendResponse);
         return true;
+      case 'LOG':
+        // Extension pages log here as well as the bot tab, because the popup's
+        // own console dies the moment the popup closes — which is exactly when
+        // you want to read what it just did.
+        ingest(msg.record, sender.tab === undefined ? 'ui' : 'page');
+        return false;
       default:
         break;
     }
@@ -64,6 +73,10 @@ function registerMessages(deps: Routes): void {
     void (async () => {
       switch (msg.type) {
         case 'MEETING_DETECTED':
+          log.info('a meeting was detected', {
+            meetingCode: msg.meetingCode,
+            tabId: sender.tab?.id,
+          });
           // The tab id comes from the sender, never from the message — a
           // content script cannot be trusted to name a tab it does not own.
           if (sender.tab?.id !== undefined) {
@@ -73,6 +86,7 @@ function registerMessages(deps: Routes): void {
 
         // Signals 1 and 2 — the user's tab says it is done.
         case 'USER_LEFT':
+          log.info('the user left', { meetingCode: msg.meetingCode, reason: msg.reason });
           await sessions.signalByCode(msg.meetingCode, msg.reason);
           break;
 
@@ -91,6 +105,7 @@ function registerMessages(deps: Routes): void {
 
         // Signal 8 — Stop pressed in the popup.
         case 'STOP_REQUESTED':
+          log.info('stop pressed', { sessionId: msg.sessionId });
           await sessions.withWatch(msg.sessionId, (w) => w.signal('manual-stop'));
           break;
 
@@ -98,7 +113,6 @@ function registerMessages(deps: Routes): void {
         case 'SEGMENT_BATCH':
         case 'SOURCE_HEALTH':
         case 'BOT_PRESENCE':
-        case 'BOT_DIAG':
           break; // these arrive over the port, not sendMessage
         case 'MOM_PROGRESS':
           break; // broadcast outward only
@@ -151,6 +165,11 @@ function registerPort(deps: Routes): void {
             break;
 
           case 'BOT_STATE':
+            log.info('notetaker state', {
+              sessionId: msg.sessionId,
+              status: msg.status,
+              detail: msg.detail,
+            });
             await repo.updateSession(msg.sessionId, {
               status: msg.status,
               ...(msg.detail === undefined ? {} : { error: msg.detail }),
@@ -168,17 +187,16 @@ function registerPort(deps: Routes): void {
             }
             break;
 
-          case 'BOT_DIAG':
-            // Deliberately console-only: this is for someone watching the
-            // worker's console while a join misbehaves, not a user-facing event.
-            console.info(
-              `[saar] bot ${msg.sessionId.slice(0, 8)} visibility=${msg.visibility}`,
-              `| ${msg.controls} | ${msg.mute}`,
-            );
+          case 'LOG':
+            // Re-emitted here so the worker's console is the single place to
+            // watch. `ingest` tags it so a forwarded record is distinguishable
+            // from one the worker produced itself.
+            ingest(msg.record, 'bot');
             break;
 
           case 'SOURCE_HEALTH':
             if (!msg.health.selectorsMatched) {
+              log.severe('caption selectors are not matching', { sessionId: msg.sessionId });
               await notify(
                 'Saar: captions not detected',
                 "Meet's caption DOM may have changed — the transcript will be empty.",
@@ -199,6 +217,7 @@ function registerBrowserEvents(deps: Routes): void {
 
   // Signal 3.
   chrome.tabs.onRemoved.addListener((tabId) => {
+    log.debug('a tab closed', { tabId });
     void sessions.signalByTab(tabId);
   });
 
