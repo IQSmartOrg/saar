@@ -5,6 +5,7 @@ import { byId } from '@/ui/dom';
 import { mountNowPanel } from '@/entrypoints/popup/panels/nowPanel';
 import { mountAccountPanel } from '@/entrypoints/popup/panels/accountPanel';
 import { mountAiPanel } from '@/entrypoints/popup/panels/aiPanel';
+import { mountAppearancePanel } from '@/entrypoints/popup/panels/appearancePanel';
 
 /**
  * The popup, which is two tabs over three panels: what Saar is doing right now,
@@ -43,3 +44,4 @@ const settings = new ChromeSettingsStore();
 mountNowPanel();
 mountAccountPanel(settings);
 mountAiPanel(settings);
+mountAppearancePanel(settings);

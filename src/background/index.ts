@@ -1,8 +1,10 @@
 import { IndexedDbTranscriptRepository } from '@/storage/IndexedDbTranscriptRepository';
 import { ChromeSettingsStore } from '@/settings/ChromeSettingsStore';
+import { DEFAULT_SETTINGS } from '@/settings/types';
 import { JobStore } from '@/processing/job/JobStore';
 import { MomRunner } from '@/processing/job/MomRunner';
 import type { Message } from '@/messaging/messages';
+import { applyIconTheme } from '@/background/icon';
 import { notify } from '@/background/notify';
 import { registerRoutes } from '@/background/routes';
 import { SessionCoordinator } from '@/background/SessionCoordinator';
@@ -42,8 +44,23 @@ export function startBackground(): void {
 
   registerRoutes({ repo, settings, jobs, state, mom, sessions });
 
+  // Registered synchronously (not inside the async block below) so it
+  // survives a service-worker restart: MV3 replays only the listeners a
+  // script attaches before its first await. Guarded on the theme actually
+  // changing — every other setting fires this callback too, and setIcon on
+  // every keystroke in the settings form would be wasteful.
+  let currentIconTheme = DEFAULT_SETTINGS.iconTheme;
+  settings.onChange((cfg) => {
+    if (cfg.iconTheme === currentIconTheme) return;
+    currentIconTheme = cfg.iconTheme;
+    void applyIconTheme(cfg.iconTheme);
+  });
+
   // The worker may be revived after a restart with work still in flight.
   void (async () => {
+    const cfg = await settings.get();
+    currentIconTheme = cfg.iconTheme;
+    await applyIconTheme(cfg.iconTheme);
     await mom.recover();
     await sessions.armWatchdogIfBusy();
     log.info('worker ready');

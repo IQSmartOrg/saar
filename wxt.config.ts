@@ -86,23 +86,21 @@ export default defineConfig({
     action: {
       default_popup: 'popup.html',
       default_title: 'Saar',
+      // No `theme_icons` here: it is a Firefox/Safari feature only — Chrome's
+      // `chrome.action` has no theme-aware icon support at all (no
+      // `theme_icons`, no `onThemeChanged`, nothing; see w3c/webextensions#229,
+      // still open). A Chrome build can only react to the OS theme from a
+      // context with a DOM, which a service worker does not have, so instead
+      // the toolbar icon is user-chosen via the `iconTheme` setting and applied
+      // at runtime with `chrome.action.setIcon` — see `background/icon.ts`.
+      // This is only the icon Chrome shows before that first runs; it matches
+      // `iconTheme`'s default.
       default_icon: {
-        16: '/icon-16.png',
-        32: '/icon-32.png',
-        48: '/icon-48.png',
-        128: '/icon-128.png',
+        16: '/icon-light-16.png',
+        32: '/icon-light-32.png',
+        48: '/icon-light-48.png',
+        128: '/icon-light-128.png',
       },
-      // The toolbar is the only place Chrome swaps icons for us — the
-      // extensions page and the Web Store always render `icons` below, so
-      // only the navy mark (readable on their fixed light background) goes
-      // there. `dark` here means "dark-colored", i.e. what a light toolbar
-      // theme needs; `light` is the white mark for a dark toolbar theme.
-      theme_icons: [
-        { size: 16, light: '/icon-light-16.png', dark: '/icon-16.png' },
-        { size: 32, light: '/icon-light-32.png', dark: '/icon-32.png' },
-        { size: 48, light: '/icon-light-48.png', dark: '/icon-48.png' },
-        { size: 128, light: '/icon-light-128.png', dark: '/icon-128.png' },
-      ],
     },
     icons: {
       16: '/icon-16.png',
