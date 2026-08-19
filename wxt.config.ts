@@ -83,7 +83,27 @@ export default defineConfig({
      * sends `Origin: chrome-extension://<id>` and Ollama answers 403.
      */
     optional_host_permissions: ['http://localhost/*', 'http://127.0.0.1/*', 'https://*/*'],
-    action: { default_popup: 'popup.html', default_title: 'Saar' },
+    action: {
+      default_popup: 'popup.html',
+      default_title: 'Saar',
+      default_icon: {
+        16: '/icon-16.png',
+        32: '/icon-32.png',
+        48: '/icon-48.png',
+        128: '/icon-128.png',
+      },
+      // The toolbar is the only place Chrome swaps icons for us — the
+      // extensions page and the Web Store always render `icons` below, so
+      // only the navy mark (readable on their fixed light background) goes
+      // there. `dark` here means "dark-colored", i.e. what a light toolbar
+      // theme needs; `light` is the white mark for a dark toolbar theme.
+      theme_icons: [
+        { size: 16, light: '/icon-light-16.png', dark: '/icon-16.png' },
+        { size: 32, light: '/icon-light-32.png', dark: '/icon-32.png' },
+        { size: 48, light: '/icon-light-48.png', dark: '/icon-48.png' },
+        { size: 128, light: '/icon-light-128.png', dark: '/icon-128.png' },
+      ],
+    },
     icons: {
       16: '/icon-16.png',
       32: '/icon-32.png',
