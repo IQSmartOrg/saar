@@ -1,6 +1,9 @@
 import { CAPTION_SELECTORS, MEET_CONTROLS } from '@/meet/controls';
 import { resolveControl, type MatchStrategy } from '@/meet/resolve';
 import { sleep as realSleep, type Sleep } from '@/utils/sleep';
+import { logger } from '@/utils/logger';
+
+const log = logger('meet.captions');
 
 /**
  * Turning Meet's live captions on.
@@ -19,6 +22,44 @@ import { sleep as realSleep, type Sleep } from '@/utils/sleep';
  */
 export function captionsAreOn(doc: Document, region: string = CAPTION_SELECTORS.region): boolean {
   return doc.querySelector(region) !== null;
+}
+
+/**
+ * What the page looks like when captions do not come on.
+ *
+ * Clicking the control and getting no region has several causes that look
+ * identical from outside, and this separates them:
+ *
+ *   ccPressed / ccLabel  did the toggle actually flip? If the label still says
+ *                        "turn on", the click never registered.
+ *   regions / ariaCaption  is there a caption region under markup our selector
+ *                        does not match? Then the selector is stale.
+ *   blocks               caption text present without its region — same.
+ *   leave / participants are we even in the meeting? The captions control is
+ *                        currently accepted as proof of being in-call, and if
+ *                        it appears earlier than that, we would be clicking it
+ *                        on a screen where it cannot do anything.
+ */
+export function describeCaptionDom(doc: Document): Record<string, unknown> {
+  const cc = resolveControl(doc, MEET_CONTROLS.captions, { includeDisabled: true });
+  const leave = resolveControl(doc, MEET_CONTROLS.leave, { includeDisabled: true });
+  const ariaCaption = Array.from(doc.querySelectorAll('[aria-label]')).filter((el) =>
+    /aption/i.test(el.getAttribute('aria-label') ?? ''),
+  );
+
+  return {
+    ccFound: cc !== null,
+    ccLabel: cc?.el.getAttribute('aria-label') ?? null,
+    ccPressed: cc?.el.getAttribute('aria-pressed') ?? null,
+    ccDisabled: cc?.el.getAttribute('aria-disabled') ?? null,
+    regions: doc.querySelectorAll('[role="region"]').length,
+    ariaCaptionCount: ariaCaption.length,
+    ariaCaptionLabels: ariaCaption.slice(0, 4).map((el) => el.getAttribute('aria-label')),
+    blocks: doc.querySelectorAll(CAPTION_SELECTORS.block).length,
+    leaveFound: leave !== null,
+    participants: doc.querySelectorAll('[data-participant-id]').length,
+    url: doc.location?.pathname ?? null,
+  };
 }
 
 export interface EnableCaptionsResult {
@@ -103,11 +144,16 @@ export async function startCaptions(
 
       // Already on: region is present by definition, nothing to wait for.
       if (result.alreadyOn) {
+        log.info('captions were already on');
         return { ok: true, attempts: attempt + 1, matchedBy };
       }
+      log.debug('clicked the captions control', { attempt: attempt + 1, matchedBy });
+
+      log.debug('waiting for the caption region', describeCaptionDom(doc));
 
       for (let i = 0; i < settleAttempts; i++) {
         if (captionsAreOn(doc)) {
+          log.info('caption region mounted', { attempt: attempt + 1, matchedBy });
           return { ok: true, attempts: attempt + 1, matchedBy };
         }
         await sleep(settlePollMs);
@@ -122,6 +168,14 @@ export async function startCaptions(
     if (attempt < retries - 1) await sleep(1000 * 2 ** attempt);
   }
 
+  // Everything needed to tell a stale selector from a click that never
+  // registered from a control clicked before we were really in the meeting.
+  log.severe('captions never came on', {
+    retries,
+    everClicked,
+    matchedBy,
+    ...describeCaptionDom(doc),
+  });
   return {
     ok: false,
     attempts: retries,

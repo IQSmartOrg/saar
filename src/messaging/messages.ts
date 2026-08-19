@@ -3,6 +3,7 @@ import type { SessionStatus } from '@/session/types';
 import type { TranscriptSegment } from '@/capture/types';
 import type { ImmediateStopReason } from '@/session/stopSignals';
 import type { MomProgress } from '@/processing/mom/types';
+import type { LogRecord } from '@/utils/logger';
 
 /**
  * One row of "what Saar is doing right now".
@@ -76,19 +77,14 @@ export type Message =
   /** Signal 7: the bot reporting whether it is still inside the call. */
   | { type: 'BOT_PRESENCE'; sessionId: string; inCall: boolean }
   /**
-   * What the bot can see while it is trying to get in.
+   * A log record from a content script, for the worker to print.
    *
-   * Logged by the worker, not the bot tab: reading the bot tab's own console
-   * means focusing it, and focusing it is what makes Chrome prioritise its
-   * rendering — so the act of observing changes the thing being observed.
+   * The notetaker runs in a hidden tab, and reading that tab's own console
+   * means clicking onto it — which makes Chrome start rendering it, frequently
+   * the exact thing being diagnosed. Forwarding means one console shows
+   * everything and reading it disturbs nothing.
    */
-  | {
-      type: 'BOT_DIAG';
-      sessionId: string;
-      visibility: string;
-      controls: string;
-      mute: string;
-    }
+  | { type: 'LOG'; record: LogRecord }
   /** Signal 8: Stop pressed in the popup. */
   | { type: 'STOP_REQUESTED'; sessionId: string }
   /** Popup asks what Saar is doing right now — recording, summarising, or done. */

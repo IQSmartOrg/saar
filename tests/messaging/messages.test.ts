@@ -40,8 +40,8 @@ describe('message bus', () => {
           return 'llm probe';
         case 'MOM_CONTROL':
           return `mom ${m.action}`;
-        case 'BOT_DIAG':
-          return `diag ${m.visibility}`;
+        case 'LOG':
+          return `log ${m.record.level}`;
         default:
           return assertNever(m);
       }

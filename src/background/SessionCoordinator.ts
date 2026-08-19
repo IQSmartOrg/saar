@@ -14,6 +14,9 @@ import {
 import type { MomRunner } from '@/processing/job/MomRunner';
 import type { BackgroundState } from '@/background/state';
 import { notify } from '@/background/notify';
+import { logger } from '@/utils/logger';
+
+const log = logger('background.session');
 
 export const WATCHDOG_ALARM = 'saar:watchdog';
 
@@ -48,15 +51,20 @@ export class SessionCoordinator {
     const { repo, settings, state } = this.deps;
 
     const registry = await state.loadRegistry();
-    if (registry.byMeetingCode(meetingCode)) return; // idempotent
+    if (registry.byMeetingCode(meetingCode)) {
+      log.debug('already recording this meeting', { meetingCode });
+      return; // idempotent
+    }
 
     const cfg = await settings.get();
     if (cfg.botAccountIndex === null) {
+      log.warning('no notetaker account chosen — refusing to start', { meetingCode });
       await notify('Saar needs setup', 'Choose the notetaker Google account in the Saar popup.');
       return;
     }
 
     const sessionId = newSessionId();
+    log.info('starting a session', { sessionId, meetingCode, userTabId });
     await repo.createSession({
       id: sessionId,
       platform: 'google-meet',
@@ -74,10 +82,12 @@ export class SessionCoordinator {
     this.bots.set(sessionId, bot);
     const result = await bot.join({ sessionId, meetingCode, accountIndex: cfg.botAccountIndex });
     if (!result.ok) {
+      log.severe('could not open the notetaker', { sessionId, reason: result.error });
       await repo.updateSession(sessionId, { status: 'failed', error: result.error });
       this.bots.delete(sessionId);
       return;
     }
+    log.info('notetaker tab opened', { sessionId, botTabId: result.tabId });
 
     const entry: ActiveSession = {
       sessionId,
@@ -100,6 +110,12 @@ export class SessionCoordinator {
     const registry = await state.loadRegistry();
     const entry = registry.bySessionId(sessionId);
     if (!entry) return; // idempotent — several signals converge here
+
+    log.info('ending a session', {
+      sessionId,
+      reason: decision?.reason ?? 'no decision',
+      detail: decision?.detail,
+    });
 
     registry.remove(sessionId);
     await state.saveRegistry(registry);
@@ -135,6 +151,11 @@ export class SessionCoordinator {
     await repo.updateSession(sessionId, { status: 'ended', endedAt: Date.now() });
     const segments = await repo.getSegments(sessionId);
     const captured = segments.filter((s) => s.final).length;
+    log.info('session captured', {
+      sessionId,
+      lines: captured,
+      clean: decision === undefined || isCleanStop(decision.reason),
+    });
 
     // Say why it stopped. A session that ended because captions dried up is a
     // fault, not a finished meeting, and must not read as one.
@@ -162,7 +183,14 @@ export class SessionCoordinator {
 
     const decision = fn(watch);
     await this.deps.state.saveWatches(watches);
-    if (decision) await this.end(sessionId, decision);
+    if (decision) {
+      log.info('stop signal decided the session is over', {
+        sessionId,
+        reason: decision.reason,
+        detail: decision.detail,
+      });
+      await this.end(sessionId, decision);
+    }
   }
 
   /** Resolves a meeting code to its session, for signals that only know the code. */

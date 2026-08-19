@@ -100,7 +100,7 @@ function renderBar(vm: DetailViewModel, lineCount: number): HTMLElement {
     ),
   );
 
-  const download = button('Download .md', 'act', () => {
+  const download = button('Download .md', 'act primary', () => {
     // One complete file regardless of the tab: minutes without the transcript
     // lose the evidence behind them.
     downloadMarkdown(`${session.meetingCode}.md`, meetingToMarkdown(session, segments, minutes));

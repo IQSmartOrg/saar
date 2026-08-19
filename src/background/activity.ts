@@ -38,7 +38,11 @@ export async function buildActivity(deps: ActivityDeps): Promise<Activity[]> {
       sessionId: entry.sessionId,
       title: session?.title ?? entry.meetingCode,
       startedAt: session?.startedAt ?? 0,
-      lines: segments.filter((x) => x.final).length,
+      // Not final-only: a block finalises only once it scrolls out of Meet's
+      // rolling window or the call ends, so while recording that count can
+      // sit at 0 for minutes despite lines actively coming in. The transcript
+      // view hits the same trap for the same reason — see its comment.
+      lines: segments.length,
     });
   }
 

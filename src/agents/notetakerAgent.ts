@@ -5,6 +5,7 @@ import { isBotTab } from '@/meet/meetingCode';
 import { DEFAULT_BATCHER_OPTIONS, SegmentBatcher } from '@/capture/SegmentBatcher';
 import { SystemClock } from '@/utils/clock';
 import { SystemScheduler } from '@/utils/scheduler';
+import { addSink, logger } from '@/utils/logger';
 import { PORT_NAME, type Message } from '@/messaging/messages';
 
 /**
@@ -20,13 +21,18 @@ const DIAG_INTERVAL_MS = 5000;
 const CAPTION_RETRIES = 5;
 const HEALTH_INTERVAL_MS = 30_000;
 
+const log = logger('agents.notetaker');
+
 type BotStatus = 'joining' | 'in-lobby' | 'capturing' | 'ended' | 'failed';
 
 export async function startNotetakerAgent(): Promise<void> {
   if (!isBotTab(location.href)) return;
 
   const sessionId = new URL(location.href).searchParams.get('saarSession');
-  if (sessionId === null) return;
+  if (sessionId === null) {
+    log.warning('bot tab carries no saarSession — serving no session');
+    return;
+  }
 
   const port = chrome.runtime.connect({ name: PORT_NAME });
   const send = (m: Message): void => port.postMessage(m);
@@ -34,19 +40,34 @@ export async function startNotetakerAgent(): Promise<void> {
     send({ type: 'BOT_STATE', sessionId, status, detail });
   };
 
+  // Everything logged from here also reaches the worker's console — the only
+  // one readable without clicking onto this tab, and clicking onto it changes
+  // how Chrome renders it, which is usually what is being diagnosed.
+  addSink((record) => {
+    try {
+      send({ type: 'LOG', record });
+    } catch {
+      // The port closes when the meeting ends; losing a line then is fine.
+    }
+  });
+
+  log.info('notetaker starting', {
+    sessionId,
+    // The real value: this script runs in the isolated world, so it is
+    // unaffected by the visibility spoof keep-rendering applies to Meet.
+    visibility: document.visibilityState,
+  });
   sendState('joining');
 
-  // Reported to the worker every few seconds until we are in, because the tab's
-  // own console cannot be read without focusing it — and focusing it is the
-  // very thing that changes how Chrome renders it.
+  // Reported until we are in, so a stalled join says why rather than merely
+  // timing out.
   const diag = setInterval(() => {
     const { controls, mute } = inspectControls(document);
-    send({
-      type: 'BOT_DIAG',
-      sessionId,
+    log.debug('page state', {
       visibility: document.visibilityState,
       controls: controls.map((c) => `${c.control}:${c.matchedBy}`).join(' '),
-      mute: `mic=${mute.mic ?? '?'} camera=${mute.camera ?? '?'}`,
+      mic: mute.mic,
+      camera: mute.camera,
     });
   }, DIAG_INTERVAL_MS);
 
@@ -58,7 +79,11 @@ export async function startNotetakerAgent(): Promise<void> {
   // Budgets are per stage and live in meet/join.ts — see DEFAULT_JOIN_BUDGETS.
   const entered = await joinMeeting(document, {
     pollMs: ENTER_POLL_MS,
-    onLobby: () => sendState('in-lobby'),
+    onLobby: () => {
+      log.info('queued for admission');
+      sendState('in-lobby');
+    },
+    onState: (state) => log.info('join stage', { stage: state }),
   });
 
   // How long each stage actually took, in the tab it actually runs in. This is
@@ -66,29 +91,45 @@ export async function startNotetakerAgent(): Promise<void> {
   // guesses until someone reads these numbers off a real meeting.
   clearInterval(diag);
 
-  console.info(
-    '[saar] join stages:',
-    entered.visited.map((v) => `${v.state} ${Math.round(v.ms / 1000)}s`).join(' → '),
-    entered.report.map((r) => `${r.control}:${r.matchedBy}`).join(' '),
-  );
+  const stages = entered.visited.map((v) => `${v.state} ${Math.round(v.ms / 1000)}s`).join(' → ');
+  const controls = entered.report.map((r) => `${r.control}:${r.matchedBy}`).join(' ');
 
   if (!entered.ok) {
+    log.severe('could not get into the meeting', {
+      reason: entered.error,
+      stages,
+      controls,
+      needsAdmission: entered.needsAdmission,
+    });
     sendState('failed', entered.error);
     return;
   }
+
+  // The stage timings are where the budgets in meet/join.ts should come from,
+  // and the resolver layers show DOM drift before it breaks anything.
+  log.info('in the meeting', { stages, controls, wasInLobby: entered.wasInLobby });
 
   // 2. Turn captions on, with backoff. Returns only once the caption region is
   //    genuinely in the DOM, not merely once the button was clicked.
   const captions = await startCaptions(document, { retries: CAPTION_RETRIES });
   if (!captions.ok) {
+    log.severe('captions never came on', {
+      reason: captions.error,
+      attempts: captions.attempts,
+      matchedBy: captions.matchedBy,
+    });
     sendState('failed', captions.error);
     return;
   }
+  log.info('captions on', { attempts: captions.attempts, matchedBy: captions.matchedBy });
 
   // 3. Scrape, batching so a caption revised twenty times a second does not
   //    become twenty IndexedDB writes.
   const batcher = new SegmentBatcher(
-    (segments) => send({ type: 'SEGMENT_BATCH', sessionId, segments }),
+    (segments) => {
+      log.debug('flushing segments', { count: segments.length });
+      send({ type: 'SEGMENT_BATCH', sessionId, segments });
+    },
     DEFAULT_BATCHER_OPTIONS,
     SystemScheduler,
   );
@@ -100,18 +141,22 @@ export async function startNotetakerAgent(): Promise<void> {
   // Announcing 'capturing' without checking is how a meeting could report
   // itself as being recorded while capturing nothing at all.
   if (!scraper.health().selectorsMatched) {
-    sendState('failed', 'caption region not found — nothing would be captured');
+    const why = 'caption region not found — nothing would be captured';
+    log.severe(why);
+    sendState('failed', why);
     batcher.dispose();
     port.disconnect();
     return;
   }
 
+  log.info('capturing');
   sendState('capturing');
 
   let torndown = false;
   const teardown = async (status: 'ended' | 'failed'): Promise<void> => {
     if (torndown) return;
     torndown = true;
+    log.info('tearing down', { status, segments: scraper.health().segmentsSeen });
     clearInterval(health);
     await scraper.stop();
     batcher.dispose();
@@ -135,13 +180,22 @@ export async function startNotetakerAgent(): Promise<void> {
     // Nothing should be pending this long, but a missed flush would strand the
     // tail of the meeting, so force one on every health tick.
     flush();
-    send({ type: 'SOURCE_HEALTH', sessionId, health: scraper.health() });
+    const state = scraper.health();
+    log.debug('health', {
+      segments: state.segmentsSeen,
+      lastSegmentAt: state.lastSegmentAt,
+      selectorsMatched: state.selectorsMatched,
+    });
+    if (!state.selectorsMatched) log.warning('caption selectors stopped matching');
+    send({ type: 'SOURCE_HEALTH', sessionId, health: state });
 
     // Signal 7. The bot being ejected — removed by the host, or the meeting
     // ending for everyone — leaves it on a post-call screen where captions
     // simply stop. Reporting presence lets the background worker end the
     // session now instead of waiting out the stall timeout.
-    send({ type: 'BOT_PRESENCE', sessionId, inCall: isInCall(document) });
+    const inCall = isInCall(document);
+    if (!inCall) log.warning('no longer in the call');
+    send({ type: 'BOT_PRESENCE', sessionId, inCall });
   }, HEALTH_INTERVAL_MS);
 
   // Signal 4.

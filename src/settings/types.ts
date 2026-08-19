@@ -6,6 +6,15 @@ export interface Settings {
   readonly toastDelayMs: number;
 
   /**
+   * Which toolbar icon to show. Chrome has no built-in way to detect the
+   * browser's own light/dark theme from a service worker (no DOM, no
+   * `matchMedia`, and the manifest's `theme_icons` field is Firefox/Safari
+   * only — Chrome silently ignores it), so this is a setting rather than
+   * something we sense. See `background/icon.ts`.
+   */
+  readonly iconTheme: 'dark' | 'light';
+
+  /**
    * The AI summary toggle. Off by default: capture works without a model, and
    * nothing should be sent anywhere until the user has explicitly asked for it
    * and seen where it is going.
@@ -28,6 +37,7 @@ export const DEFAULT_SETTINGS: Settings = {
   botAccountIndex: null,
   autoJoin: true,
   toastDelayMs: 5000,
+  iconTheme: 'dark',
 
   momEnabled: false,
   llmProviderId: 'ollama',

@@ -2,6 +2,9 @@ import { LOBBY_INDICATOR, MEET_CONTROLS, type MeetControls } from '@/meet/contro
 import { resolveControl, visibleLabel, type MatchStrategy } from '@/meet/resolve';
 import type { Sleep } from '@/utils/sleep';
 import { runStateMachine, type StateVisit } from '@/utils/stateMachine';
+import { logger } from '@/utils/logger';
+
+const log = logger('meet.join');
 
 /**
  * Getting into a Google Meet call with the microphone and camera off.
@@ -204,6 +207,22 @@ export class MeetJoin {
     if (this.isInLobby()) return false;
     return this.find('captions') !== null || this.find('leave') !== null;
   }
+
+  /**
+   * What made isInCall() true, spelled out.
+   *
+   * `captions` alone is accepted as proof, which is only sound if the control
+   * cannot appear before the meeting does. Logging the parts separately is what
+   * lets that assumption be checked against a real meeting rather than trusted.
+   */
+  inCallEvidence(): Record<string, unknown> {
+    return {
+      captions: this.read('captions') !== null,
+      leave: this.read('leave') !== null,
+      participants: this.doc.querySelectorAll('[data-participant-id]').length,
+      inLobby: this.isInLobby(),
+    };
+  }
 }
 
 /**
@@ -339,6 +358,7 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
   const budgets = { ...DEFAULT_JOIN_BUDGETS, ...opts.budgets };
 
   const join = new MeetJoin(doc);
+  log.info('getting into the meeting', { budgets });
 
   let wasInLobby = false;
   let everConfirmedOff = false;
@@ -383,6 +403,7 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
           if (!pressedEnter && join.micAndCameraConfirmedOff()) {
             everConfirmedOff = true;
             pressedEnter = true;
+            log.warning('no join button recognised — pressing Enter once');
             join.pressEnter();
           }
         },
@@ -409,6 +430,7 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
           if (!click.clicked) return;
 
           lastClickAt = now();
+          log.info('clicked join', { label: click.label, needsAdmission: click.needsAdmission });
           if (click.needsAdmission) {
             // The button said so itself — no need to wait and infer it.
             needsAdmission = true;
@@ -428,6 +450,7 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
         budgetMs: budgets.waitingMs,
         onEnter: (c) => {
           onState?.(c.state);
+          log.info('queued for admission');
           if (wasInLobby) return;
           wasInLobby = true;
           onLobby?.();
@@ -442,7 +465,16 @@ export async function joinMeeting(doc: Document, opts: JoinOptions = {}): Promis
 
       'in-call': {
         budgetMs: Number.POSITIVE_INFINITY,
-        onEnter: (c) => onState?.(c.state),
+        onEnter: (c) => {
+          onState?.(c.state);
+          // Which control convinced us. The captions control alone is currently
+          // sufficient, so if it ever appears before we are really in the
+          // meeting this line is where that shows up — captions present with no
+          // leave control and no participants is the shape to look for.
+          log.info('believed to be in the call', {
+            evidence: join.inCallEvidence(),
+          });
+        },
         onTimeout: () => 'unreachable: in-call is a terminal state',
       },
     },

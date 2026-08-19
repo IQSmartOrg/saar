@@ -5,6 +5,9 @@ import { showJoinToast } from '@/ui/joinToast';
 import { SETTINGS_KEY } from '@/settings/ChromeSettingsStore';
 import { DEFAULT_SETTINGS, type Settings } from '@/settings/types';
 import type { Message } from '@/messaging/messages';
+import { logger } from '@/utils/logger';
+
+const log = logger('agents.userTab');
 
 /**
  * Runs in the user's OWN Meet tab.
@@ -37,6 +40,7 @@ export function startUserTabAgent(): void {
     if (announced === null) return;
     dismissToast?.();
     dismissToast = null;
+    log.info('the user left the call', { meetingCode: announced, reason });
     send({ type: 'USER_LEFT', meetingCode: announced, reason });
     announced = null;
   };
@@ -67,8 +71,12 @@ export function startUserTabAgent(): void {
       if (!isInCall(document)) return;
 
       announced = code;
+      log.info('the user is in a call', { meetingCode: code });
       const cfg = await readSettings();
-      if (!cfg.autoJoin) return;
+      if (!cfg.autoJoin) {
+        log.info('auto-join is off — not asking for a notetaker', { meetingCode: code });
+        return;
+      }
       dismissToast = showJoinToast(document, cfg.toastDelayMs, () =>
         send({
           type: 'MEETING_DETECTED',

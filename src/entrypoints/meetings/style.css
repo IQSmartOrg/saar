@@ -256,11 +256,10 @@ header {
   background: color-mix(in srgb, currentColor 8%, transparent);
 }
 .act.primary {
-  background: var(--fg);
-  color: var(--bg);
-  border-color: var(--fg);
+  border-color: color-mix(in srgb, var(--green) 40%, transparent);
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 8%, transparent);
 }
-/* Pushed away from the rest: it removes the transcript too, and cannot be undone. */
 .act.danger {
   margin-left: auto;
   color: var(--signal);

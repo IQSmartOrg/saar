@@ -188,43 +188,65 @@ branch and open the PR against `main`.
 
 ### Debugging a meeting that goes wrong
 
+Every module logs through `utils/logger.ts` — one structured record per thing
+that happens, carrying a timestamp, level, module, message, context and any
+exception. It prints a readable line plus an expandable object, so DevTools
+shows both.
+
+```
+[saar] 16:22:41.123 meet.join: clicked join            {label: "ask to join", needsAdmission: true}
+[saar] ←bot 16:22:43.061 agents.notetaker: capturing
+```
+
+Levels map onto the console methods DevTools already filters by, so its
+Verbose/Info/Warnings/Errors buttons work as-is:
+
+| Method | Console | Use it for |
+|---|---|---|
+| `log.debug` | `console.debug` | per-tick detail — page state, health, flushes |
+| `log.info` | `console.info` | something happened: joined, captured, queued |
+| `log.warning` | `console.warn` | degraded but surviving — selector drift, no longer in call |
+| `log.severe` | `console.error` | the thing failed |
+
+Dev builds show `debug` and up; production starts at `info`. Override at
+runtime from any console with `saarLogLevel('debug')`.
+
 **Read the service worker's console, not the notetaker tab's.** The notetaker
-runs in a hidden background tab, and reading that tab's own console means
-clicking onto it — which makes Chrome start rendering it, which is frequently
-the very thing you are trying to diagnose. Observing it changes it. So the bot
-reports what it can see over its port, and the worker logs it.
+runs in a hidden tab, and reading that tab's own console means clicking onto it
+— which makes Chrome start rendering it, frequently the exact thing you are
+diagnosing. Observing it changes it. So the notetaker forwards its records over
+its port and the worker prints them, marked `←bot`. One console shows
+everything, and reading it disturbs nothing.
 
 Open `chrome://extensions` → **Saar** → click **`service worker`**.
 
-Two lines matter. The first arrives every 5s while the bot is trying to get in:
+The module name says where to look:
 
-```
-[saar] bot 40cfade6 visibility=hidden | mic:jsname camera:jsname join:text captions:none leave:none | mic=true camera=true
-```
-
-| Field | Reading it |
+| Prefix | |
 |---|---|
-| `visibility` | The **real** value. The extension spoofs this for Meet, but only in the MAIN world — content scripts stay in the isolated world so this stays honest. `hidden` is normal and expected. |
-| `mic:` … | Which resolver layer matched each control. `jsname` and `icon` are durable; `aria` and `text` are English-only; `none` means it was not found. |
-| `mic=` `camera=` | Mute state as the page reports it. `?` means the control was not found at all. |
+| `agents.userTab` | detecting that *you* joined a call |
+| `bot.chromeTab` | opening and closing the notetaker tab |
+| `agents.notetaker` | the notetaker's whole life, forwarded as `←bot` |
+| `meet.join` · `meet.captions` · `meet.captionScraper` | the Meet DOM steps |
+| `background.session` · `background.routes` | session lifecycle and message routing |
+| `processing.mom` · `processing.llm.*` | transcript → minutes |
+| `settings.googleAccounts` | the account dropdown |
 
-A healthy notetaker shows `visibility=hidden` with the controls resolving and
-`mic=true camera=true`. `mic:none camera:none` while Meet is clearly loaded
-means the page has stopped rendering — see `agents/keepRendering.ts`. Drift from
-`jsname` down to `text` is an early warning that Meet changed its DOM, visible
-before anything actually breaks.
-
-The second line arrives once, when the join finishes:
+Two things to look for when a join misbehaves. `meet.join` logs the resolver
+layer that matched each control — drift from `jsname` down to `text` is an early
+warning that Meet changed its DOM, visible before anything breaks, and `none`
+means it was not found at all. And `agents.notetaker` logs the per-stage
+timings on the way in:
 
 ```
-[saar] join stages: booting 47s → prejoin 4s → in-call 0s   mic:jsname camera:jsname join:text
+in the meeting  {stages: "booting 4s → prejoin 4s → in-call 0s", controls: "mic:jsname ..."}
 ```
 
-That is where the per-stage budgets in `meet/join.ts` should come from —
-measured on a real meeting rather than guessed.
+That is where the budgets in `meet/join.ts` should come from — measured on a
+real meeting rather than guessed.
 
-**After changing anything, reload the extension** at `chrome://extensions`.
-A rebuild alone does nothing, and content-script changes only reach tabs opened
+**After changing anything, reload the extension** at `chrome://extensions`. A
+rebuild alone does nothing, and content-script changes only reach tabs opened
 afterwards, so start a fresh meeting rather than reusing one.
 
 **Releasing** is a manual workflow run: Actions → Release → enter a version like
