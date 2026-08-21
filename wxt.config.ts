@@ -15,7 +15,7 @@ export default defineConfig({
     short_name: 'Saar',
     // Store limit is 132 characters, and it is shown in full in search results.
     description: 'AI note-taking for your meetings. Joins your Google Meet calls, records captions, writes the minutes.',
-    homepage_url: 'https://github.com/IQSmartOrg/saar',
+    homepage_url: 'https://iqsmartorg.github.io/saar/',
     // Owned by .github/workflows/release.yml, which rewrites it (via
     // scripts/set-version.mjs) on the release branch it cuts. It is NOT kept in
     // step on main and is not meant to be — the release workflow writes this

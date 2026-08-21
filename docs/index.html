@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Saar — AI note-taking for your meetings</title>
+<meta name="description" content="Saar is a Chrome extension that joins your Google Meet calls, records captions, and writes the minutes. Transcripts stay on your machine; AI summaries are off by default.">
+<link rel="icon" href="assets/icon-128.png">
+<style>
+  :root {
+    --teal: #1a414e;
+    --mint: #d9efea;
+    --bg: #fff;
+    --fg: var(--teal);
+    --surface: var(--mint);
+    --muted: color-mix(in srgb, var(--fg) 65%, transparent);
+    --border: color-mix(in srgb, var(--fg) 16%, transparent);
+    --accent: #e0605c;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #10262d;
+      --fg: var(--mint);
+      --surface: #17323b;
+    }
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--fg);
+  }
+
+  body {
+    font: 16px/1.6 -apple-system, system-ui, sans-serif;
+  }
+
+  main {
+    max-width: 760px;
+    margin: 0 auto;
+    padding: 0 24px 96px;
+  }
+
+  header.top {
+    padding: 48px 0 8px;
+    text-align: center;
+  }
+
+  header.top img {
+    width: 220px;
+    max-width: 60vw;
+    height: auto;
+  }
+
+  .lockup-dark { display: none; }
+  @media (prefers-color-scheme: dark) {
+    .lockup-light { display: none; }
+    .lockup-dark { display: inline; }
+  }
+
+  .tagline {
+    margin: 20px 0 4px;
+    font-size: 1.4rem;
+    font-weight: 600;
+  }
+
+  .subhead {
+    margin: 0 0 32px;
+    color: var(--muted);
+    font-size: 1.05rem;
+  }
+
+  .cta-row {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+    flex-wrap: wrap;
+    margin-bottom: 56px;
+  }
+
+  .btn {
+    display: inline-block;
+    padding: 12px 22px;
+    border-radius: 10px;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 0.95rem;
+    border: 1px solid var(--border);
+  }
+
+  .btn.primary {
+    background: var(--fg);
+    color: var(--bg);
+    border-color: transparent;
+  }
+
+  .btn.secondary {
+    color: var(--fg);
+    background: transparent;
+  }
+
+  .shot {
+    margin: 0 0 64px;
+    text-align: center;
+  }
+
+  .shot img {
+    width: 100%;
+    max-width: 100%;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    box-shadow: 0 20px 60px -30px rgba(0, 0, 0, 0.5);
+  }
+
+  h2 {
+    font-size: 1.3rem;
+    margin: 0 0 20px;
+  }
+
+  section {
+    margin-bottom: 64px;
+  }
+
+  .features {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: grid;
+    gap: 20px;
+  }
+
+  .features li {
+    padding: 18px 20px;
+    background: var(--surface);
+    border-radius: 12px;
+  }
+
+  .features strong {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .features span {
+    color: var(--muted);
+    font-size: 0.95rem;
+  }
+
+  .privacy {
+    padding: 24px;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+  }
+
+  .privacy p:last-child {
+    margin-bottom: 0;
+  }
+
+  a { color: inherit; }
+
+  footer {
+    text-align: center;
+    color: var(--muted);
+    font-size: 0.9rem;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+  }
+
+  footer a {
+    text-decoration: underline;
+  }
+</style>
+</head>
+<main>
+  <header class="top">
+    <img class="lockup-light" src="assets/logo-lockup.png" alt="Saar">
+    <img class="lockup-dark" src="assets/logo-lockup-dark.png" alt="Saar">
+    <p class="tagline">AI note-taking for your meetings.</p>
+    <p class="subhead">
+      It sits in your calls, writes down what was said and who said it,
+      and turns it into a summary and minutes.
+    </p>
+    <div class="cta-row">
+      <a class="btn primary" href="https://github.com/IQSmartOrg/saar/releases/latest">Download latest release</a>
+      <a class="btn secondary" href="https://github.com/IQSmartOrg/saar">View on GitHub</a>
+    </div>
+  </header>
+
+  <div class="shot">
+    <img src="assets/screenshot-meetings.png" alt="Saar's meeting history view, showing a summary, topics, action items and decisions extracted from a transcript" loading="lazy">
+  </div>
+
+  <section>
+    <h2>What it does</h2>
+    <p>
+      When you join a Google Meet call, Saar opens a second, muted tab signed
+      in as a notetaker account, joins the meeting with its microphone and
+      camera off, turns on live captions, and records them as they arrive.
+      When the meeting ends it hands the transcript to a language model and
+      writes the minutes.
+    </p>
+    <ul class="features">
+      <li>
+        <strong>Joins only after you do.</strong>
+        <span>Saar waits until it can see you are actually in the call — sitting in the green room does not summon a notetaker.</span>
+      </li>
+      <li>
+        <strong>Never joins live.</strong>
+        <span>It refuses to press Join until it has confirmed both the microphone and camera read as off.</span>
+      </li>
+      <li>
+        <strong>Knows when to stop.</strong>
+        <span>Nine independent stop signals mean a session cannot outlive the meeting, even if your laptop sleeps or Chrome kills the worker.</span>
+      </li>
+      <li>
+        <strong>Minutes with receipts.</strong>
+        <span>Summary, topics, decisions and action items — every action item carries the sentence it came from.</span>
+      </li>
+      <li>
+        <strong>Yours by default.</strong>
+        <span>Transcripts live in IndexedDB on your machine. AI summaries are off until you turn them on, defaulting to a local Ollama.</span>
+      </li>
+      <li>
+        <strong>Survives being killed.</strong>
+        <span>Summarising persists between model calls, so an MV3 worker dying mid-run costs one chunk, not the meeting.</span>
+      </li>
+    </ul>
+  </section>
+
+  <div class="shot">
+    <img src="assets/screenshot-recording.png" alt="Saar's popup showing a live recording in progress with a Stop notetaker button" loading="lazy">
+  </div>
+
+  <section>
+    <h2>Privacy</h2>
+    <div class="privacy">
+      <p>
+        Saar has no backend. There is no Saar server, no account to create,
+        and no analytics, telemetry, crash reporting or tracking of any kind.
+        Transcripts and minutes stay in your Chrome profile. The only things
+        Saar sends anywhere are the transcript to the AI provider you choose
+        (off by default, local Ollama by default when on), and a request to
+        <code>meet.google.com</code> to list the Google accounts signed into
+        your profile.
+      </p>
+      <p>
+        <a href="https://github.com/IQSmartOrg/saar/blob/main/PRIVACY.md">Read the full privacy policy →</a>
+      </p>
+    </div>
+  </section>
+
+  <footer>
+    <p>
+      Saar is built by <a href="https://github.com/IQSmartOrg">IQSmartOrg</a>.
+      <a href="https://github.com/IQSmartOrg/saar">Source on GitHub</a> ·
+      <a href="https://github.com/IQSmartOrg/saar/issues">Report an issue</a>
+    </p>
+  </footer>
+</main>
+</html>
