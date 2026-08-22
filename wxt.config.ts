@@ -21,7 +21,7 @@ export default defineConfig({
     // step on main and is not meant to be — the release workflow writes this
     // value and never reads it, so what is committed here only labels local
     // dev builds. The git tags are the record of what has actually shipped.
-    version: '0.1.0',
+    version: '0.1.4',
     /**
      * Chrome ignores an update whose version is not higher than the installed
      * one, and it refuses to install below this floor at all.
